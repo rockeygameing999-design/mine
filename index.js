@@ -1,4 +1,5 @@
 import { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder } from "discord.js"
+import http from "http"
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
@@ -95,6 +96,9 @@ const difficulties = {
   hard: { width: 30, height: 16, mines: 99 },
   custom: { width: 8, height: 8, mines: 8 },
 }
+
+// Bot startup time for uptime tracking
+const startTime = Date.now()
 
 client.once("ready", () => {
   console.log(`🤖 ${client.user.tag} is online and ready to predict mines!`)
@@ -230,6 +234,46 @@ client.on("interactionCreate", async (interaction) => {
 
 // Error handling
 client.on("error", console.error)
+
+// Create HTTP server for Render
+const server = http.createServer((req, res) => {
+  if (req.url === '/') {
+    const uptime = Math.floor((Date.now() - startTime) / 1000)
+    const hours = Math.floor(uptime / 3600)
+    const minutes = Math.floor((uptime % 3600) / 60)
+    const seconds = uptime % 60
+    
+    res.writeHead(200, { 'Content-Type': 'text/html' })
+    res.end(`
+      <html>
+        <head><title>Mine Predictor Bot</title></head>
+        <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+          <h1>🤖 Mine Predictor Bot</h1>
+          <p><strong>Status:</strong> ${client.user ? 'Online ✅' : 'Starting up...'}</p>
+          <p><strong>Uptime:</strong> ${hours}h ${minutes}m ${seconds}s</p>
+          <p><strong>Bot Name:</strong> ${client.user ? client.user.tag : 'Loading...'}</p>
+          <p>Use /predict, /quickmine, or /minehelp in Discord!</p>
+        </body>
+      </html>
+    `)
+  } else if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ 
+      status: 'healthy', 
+      uptime: Date.now() - startTime,
+      bot_ready: !!client.user 
+    }))
+  } else {
+    res.writeHead(404, { 'Content-Type': 'text/plain' })
+    res.end('Not Found')
+  }
+})
+
+// Start HTTP server
+const PORT = process.env.PORT || 3000
+server.listen(PORT, () => {
+  console.log(`🌐 HTTP server running on port ${PORT}`)
+})
 
 // Login with bot token
 const token = process.env.DISCORD_BOT_TOKEN
