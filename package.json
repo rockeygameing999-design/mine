@@ -1,0 +1,17 @@
+{
+  "name": "discord-mine-predictor",
+  "version": "1.0.0",
+  "description": "A fun Discord bot that predicts random mine locations for entertainment",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1"
+  },
+  "keywords": ["discord", "bot", "minesweeper", "prediction", "fun"],
+  "author": "Your Name",
+  "license": "MIT"
+}
