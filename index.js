@@ -25,12 +25,12 @@ server.listen(PORT, () => {
 
 // Advanced mine pattern prediction class
 class MinePredictor {
-  constructor(width = 5, height = 5, mines = 25, serverSeedHash = null, clientSeed = null, nonce = null) {
+  constructor(width = 5, height = 5, safeMines = 1, serverSeedHash = null, nonce = null) {
     this.width = width
     this.height = height
-    this.mines = mines
+    this.safeMines = safeMines
+    this.mines = 25 - safeMines // Calculate actual mines from safe mines
     this.serverSeedHash = serverSeedHash || this.generateServerSeedHash()
-    this.clientSeed = clientSeed || this.generateClientSeed()
     this.nonce = nonce || Math.floor(Math.random() * 1000000)
     this.grid = []
     this.generatePredictionGrid()
@@ -41,12 +41,8 @@ class MinePredictor {
     return crypto.createHash("sha256").update(serverSeed).digest("hex")
   }
 
-  generateClientSeed() {
-    return crypto.randomBytes(16).toString("hex")
-  }
-
   generatePredictionGrid() {
-    const combinedSeed = `${this.serverSeedHash}:${this.clientSeed}:${this.nonce}`
+    const combinedSeed = `${this.serverSeedHash}:${this.nonce}`
     const hash = crypto.createHash("sha256").update(combinedSeed).digest("hex")
 
     // Initialize empty grid
@@ -145,9 +141,9 @@ class MinePredictor {
   getVerificationData() {
     return {
       serverSeedHash: this.serverSeedHash,
-      clientSeed: this.clientSeed,
       nonce: this.nonce,
-      hash: crypto.createHash("sha256").update(`${this.serverSeedHash}:${this.clientSeed}:${this.nonce}`).digest("hex"),
+      safeMines: this.safeMines,
+      hash: crypto.createHash("sha256").update(`${this.serverSeedHash}:${this.nonce}`).digest("hex"),
     }
   }
 
@@ -180,8 +176,8 @@ client.once("ready", () => {
           .setDescription("Server seed hash (64 character hex string)")
           .setRequired(true),
       )
-      .addStringOption((option) =>
-        option.setName("client_seed").setDescription("Client seed (32 character hex string)").setRequired(true),
+      .addIntegerOption((option) =>
+        option.setName("safe_mines").setDescription("Number of safe mines (1-24)").setRequired(true),
       )
       .addIntegerOption((option) => option.setName("nonce").setDescription("Nonce value (integer)").setRequired(true)),
   ]
@@ -197,10 +193,10 @@ client.on("interactionCreate", async (interaction) => {
 
   if (commandName === "predict") {
     const serverSeedHash = interaction.options.getString("server_seed_hash")
-    const clientSeed = interaction.options.getString("client_seed")
+    const safeMines = interaction.options.getInteger("safe_mines")
     const nonce = interaction.options.getInteger("nonce")
 
-    const validation = validateInputs(serverSeedHash, clientSeed, nonce)
+    const validation = validateInputs(serverSeedHash, safeMines, nonce)
     if (!validation.isValid) {
       const errorEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
@@ -214,12 +210,12 @@ client.on("interactionCreate", async (interaction) => {
         .addFields({
           name: "✅ Required Format",
           value:
-            "**Server Seed Hash:** 64 character hex string (0-9, a-f)\n**Client Seed:** 32 character hex string (0-9, a-f)\n**Nonce:** Positive integer (1-999999999)",
+            "**Server Seed Hash:** 64 character hex string (0-9, a-f)\n**Safe Mines:** Integer between 1-24\n**Nonce:** Positive integer (1-999999999)",
           inline: false,
         })
         .addFields({
           name: "📝 Example",
-          value: "Server Hash: `a1b2c3d4e5f6...` (64 chars)\nClient Seed: `123abc456def...` (32 chars)\nNonce: `12345`",
+          value: "Server Hash: `a1b2c3d4e5f6...` (64 chars)\nSafe Mines: `5`\nNonce: `12345`",
           inline: false,
         })
         .setTimestamp()
@@ -229,7 +225,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     try {
-      const predictor = new MinePredictor(5, 5, 25, serverSeedHash, clientSeed, nonce)
+      const predictor = new MinePredictor(5, 5, safeMines, serverSeedHash, nonce)
       const verification = predictor.getVerificationData()
 
       const embed = new EmbedBuilder()
@@ -239,12 +235,12 @@ client.on("interactionCreate", async (interaction) => {
         .addFields(
           {
             name: "📊 Prediction Analysis",
-            value: `Target Grid: 5×5\nPredicted Mines: 25\nAccuracy Rate: ${predictor.getPredictionAccuracy()}%`,
+            value: `Target Grid: 5×5\nSafe Mines: ${safeMines}\nDangerous Mines: ${predictor.mines}\nAccuracy Rate: ${predictor.getPredictionAccuracy()}%`,
             inline: true,
           },
           {
             name: "🔑 Analysis Seeds",
-            value: `Server Hash: \`${serverSeedHash.substring(0, 8)}...\`\nClient: \`${clientSeed}\`\nRound: ${nonce}`,
+            value: `Server Hash: \`${serverSeedHash.substring(0, 8)}...\`\nRound: ${nonce}`,
             inline: true,
           },
           {
@@ -281,7 +277,7 @@ client.on("interactionCreate", async (interaction) => {
         .addFields({
           name: "Required Format",
           value:
-            "Server Seed Hash: 64 character hex string\nClient Seed: 32 character hex string\nRound Number: Integer value",
+            "Server Seed Hash: 64 character hex string\nSafe Mines: Integer between 1-24\nRound Number: Integer value",
           inline: false,
         })
         .setTimestamp()
@@ -305,7 +301,7 @@ if (!token) {
 
 client.login(token)
 
-function validateInputs(serverSeedHash, clientSeed, nonce) {
+function validateInputs(serverSeedHash, safeMines, nonce) {
   const errors = []
 
   // Validate server seed hash
@@ -319,15 +315,14 @@ function validateInputs(serverSeedHash, clientSeed, nonce) {
     errors.push("• Server seed hash must contain only hexadecimal characters (0-9, a-f)")
   }
 
-  // Validate client seed
-  if (!clientSeed) {
-    errors.push("• Client seed is required")
-  } else if (typeof clientSeed !== "string") {
-    errors.push("• Client seed must be a string")
-  } else if (clientSeed.length !== 32) {
-    errors.push(`• Client seed must be exactly 32 characters (got ${clientSeed.length})`)
-  } else if (!/^[0-9a-fA-F]{32}$/.test(clientSeed)) {
-    errors.push("• Client seed must contain only hexadecimal characters (0-9, a-f)")
+  if (safeMines === null || safeMines === undefined) {
+    errors.push("• Safe mines count is required")
+  } else if (!Number.isInteger(safeMines)) {
+    errors.push("• Safe mines must be an integer")
+  } else if (safeMines < 1) {
+    errors.push("• Safe mines must be at least 1")
+  } else if (safeMines > 24) {
+    errors.push("• Safe mines cannot exceed 24 (maximum safe tiles)")
   }
 
   // Validate nonce
@@ -347,14 +342,8 @@ function validateInputs(serverSeedHash, clientSeed, nonce) {
     if (/^0+$/.test(serverSeedHash)) {
       errors.push("• Server seed hash appears invalid (all zeros)")
     }
-    if (/^0+$/.test(clientSeed)) {
-      errors.push("• Client seed appears invalid (all zeros)")
-    }
     if (/^(.)\1+$/.test(serverSeedHash)) {
       errors.push("• Server seed hash appears invalid (repeating pattern)")
-    }
-    if (/^(.)\1+$/.test(clientSeed)) {
-      errors.push("• Client seed appears invalid (repeating pattern)")
     }
   }
 
