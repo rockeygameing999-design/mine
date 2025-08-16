@@ -12,12 +12,12 @@ function startSelfPing() {
     try {
       const response = await fetch(RENDER_URL, { method: "GET", timeout: 5000 });
       if (response.ok) {
-        console.log(`Self-ping successful at ${new Date().toISOString()}`);
+        console.log(`[${new Date().toISOString()}] Self-ping successful`);
       } else {
-        console.error(`Self-ping failed: ${response.status}`);
+        console.error(`[${new Date().toISOString()}] Self-ping failed: ${response.status}`);
       }
     } catch (error) {
-      console.error(`Self-ping error: ${error.message}`);
+      console.error(`[${new Date().toISOString()}] Self-ping error: ${error.message}`);
     }
   }, PING_INTERVAL);
 }
@@ -42,7 +42,7 @@ const server = http.createServer((req, res) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`🌐 HTTP server running on port ${PORT}`);
+  console.log(`[${new Date().toISOString()}] 🌐 HTTP server running on port ${PORT}`);
 });
 
 class MinePredictor {
@@ -125,7 +125,6 @@ class MinePredictor {
   }
 
   verifySubmission(clientSeed, nonce, numMines, minePositions, serverSeedHash) {
-    // Generate grid using client seed, nonce, and number of mines
     const rollbetSeed = `${serverSeedHash}:${clientSeed}:${nonce}:${numMines}`;
     const hash = crypto.createHash("sha512").update(rollbetSeed).digest("hex");
 
@@ -144,11 +143,11 @@ class MinePredictor {
       hashIndex++;
     }
 
-    // Verify submitted mine positions match computed positions
-    const isValid = minePositions.length === numMines &&
-                    minePositions.every(pos => positions.includes(pos)) &&
-                    minePositions.every(pos => pos >= 0 && pos < 25) &&
-                    new Set(minePositions).size === minePositions.length;
+    const isValid =
+      minePositions.length === numMines &&
+      minePositions.every((pos) => positions.includes(pos)) &&
+      minePositions.every((pos) => pos >= 0 && pos < 25) &&
+      new Set(minePositions).size === minePositions.length;
 
     if (isValid) {
       positions.forEach((pos) => {
@@ -208,6 +207,15 @@ class MinePredictor {
     return count;
   }
 
+  getAnalysis() {
+    return {
+      patternType: "Heatmap-based",
+      method: this.method,
+      riskLevel: this.mines <= 5 ? "Low" : this.mines <= 15 ? "Medium" : "High",
+      entropyScore: Math.floor(Math.random() * 20) + 80,
+    };
+  }
+
   getVerificationData() {
     return {
       serverSeedHash: this.serverSeedHash,
@@ -226,9 +234,9 @@ const usedServerSeeds = new Map();
 const bannedUsers = new Map();
 const ADMIN_USER_IDS = ["862245514313203712", "1321546526790651967"];
 const verificationCodes = new Map([
-  ["MINES2024", { expires: null }],
-  ["PREDICT123", { expires: null }],
-  ["VERIFIED", { expires: null }],
+  ["MINES2024", { expires: null, usedBy: null }],
+  ["PREDICT123", { expires: null, usedBy: null }],
+  ["VERIFIED", { expires: null, usedBy: null }],
 ]);
 
 function validateResultInputs(serverSeedHash, clientSeed, nonce, numMines, minePositions) {
@@ -246,12 +254,15 @@ function validateResultInputs(serverSeedHash, clientSeed, nonce, numMines, mineP
   if (!Number.isInteger(numMines) || numMines < 1 || numMines > 24) {
     errors.push("Number of mines must be an integer between 1 and 24.");
   }
-  if (!minePositions || minePositions.length !== numMines) {
+  if (!minePositions || minePositions.length === 0) {
     errors.push(`Mine positions must contain exactly ${numMines} unique integers between 0 and 24.`);
   } else {
-    const parsedPositions = minePositions.split(",").map(pos => parseInt(pos.trim()));
-    if (parsedPositions.some(pos => isNaN(pos) || pos < 0 || pos > 24)) {
+    const parsedPositions = minePositions.split(",").map((pos) => parseInt(pos.trim()));
+    if (parsedPositions.some((pos) => isNaN(pos) || pos < 0 || pos > 24)) {
       errors.push("All mine positions must be integers between 0 and 24.");
+    }
+    if (parsedPositions.length !== numMines) {
+      errors.push(`Mine positions must contain exactly ${numMines} integers.`);
     }
     if (new Set(parsedPositions).size !== parsedPositions.length) {
       errors.push("Mine positions must be unique.");
@@ -261,7 +272,7 @@ function validateResultInputs(serverSeedHash, clientSeed, nonce, numMines, mineP
   return {
     isValid: errors.length === 0,
     errors,
-    parsedPositions: minePositions ? minePositions.split(",").map(pos => parseInt(pos.trim())) : [],
+    parsedPositions: minePositions ? minePositions.split(",").map((pos) => parseInt(pos.trim())) : [],
   };
 }
 
@@ -269,24 +280,22 @@ function checkSpamAndRepetition(userId, minePositions) {
   const userSubmissions = submissions.get(userId) || { count: 0, lastSubmission: 0, timestamps: [], positions: [] };
   const now = Date.now();
 
-  // Update submission timestamps
-  userSubmissions.timestamps = userSubmissions.timestamps.filter(ts => now - ts < 20000); // 20 seconds
+  userSubmissions.timestamps = userSubmissions.timestamps.filter((ts) => now - ts < 20000); // 20 seconds
   userSubmissions.timestamps.push(now);
 
-  // Update positions history
-  userSubmissions.positions.push(minePositions.sort((a, b) => a - b).join(","));
+  const sortedPositions = minePositions.sort((a, b) => a - b).join(",");
+  userSubmissions.positions.push(sortedPositions);
+  userSubmissions.positions = userSubmissions.positions.slice(-4);
 
-  // Spam detection: 5+ submissions in 20 seconds
   if (userSubmissions.timestamps.length >= 5) {
     return { isValid: false, reason: "Submitting too many results in a short time (5+ in 20 seconds)." };
   }
 
-  // Repetitive tile detection: same positions twice
   const positionCounts = {};
-  userSubmissions.positions.forEach(pos => {
+  userSubmissions.positions.forEach((pos) => {
     positionCounts[pos] = (positionCounts[pos] || 0) + 1;
-    if (positionCounts[pos] >= 2) {
-      return { isValid: false, reason: "Submitting the same mine positions multiple times." };
+    if (positionCounts[pos] > 3) {
+      return { isValid: false, reason: "Submitting the same mine positions more than three times." };
     }
   });
 
@@ -294,8 +303,24 @@ function checkSpamAndRepetition(userId, minePositions) {
   return { isValid: true };
 }
 
+function cleanExpiredCodesAndUsers() {
+  const now = Date.now();
+  for (const [code, data] of verificationCodes.entries()) {
+    if (data.expires && now > data.expires && !data.usedBy) {
+      console.log(`[${new Date().toISOString()}] Removing expired code: ${code}`);
+      verificationCodes.delete(code);
+    }
+  }
+  for (const [userId, data] of verifiedUsers.entries()) {
+    if (data.expires && now > data.expires) {
+      console.log(`[${new Date().toISOString()}] Removing expired user access: ${userId}`);
+      verifiedUsers.delete(userId);
+    }
+  }
+}
+
 client.once("ready", () => {
-  console.log(`🤖 ${client.user.tag} is online and ready to predict mines!`);
+  console.log(`[${new Date().toISOString()}] 🤖 ${client.user.tag} is online and ready to predict mines!`);
 
   const commands = [
     new SlashCommandBuilder()
@@ -371,7 +396,13 @@ client.once("ready", () => {
           .setDescription("Remove a verification code")
           .addStringOption((option) => option.setName("code").setDescription("Code to remove").setRequired(true)),
       )
-      .addSubcommand((subcommand) => subcommand.setName("stats").setDescription("View verification statistics")),
+      .addSubcommand((subcommand) => subcommand.setName("stats").setDescription("View verification statistics"))
+      .addSubcommand((subcommand) =>
+        subcommand
+          .setName("unban")
+          .setDescription("Unban a user from submitting results")
+          .addStringOption((option) => option.setName("user_id").setDescription("User ID to unban").setRequired(true)),
+      ),
   ];
 
   client.application.commands.set(commands);
@@ -409,8 +440,9 @@ client.on("interactionCreate", async (interaction) => {
       for (let i = 0; i < maxCount; i++) {
         const code = crypto.randomBytes(4).toString("hex").toUpperCase();
         const expires = duration ? Date.now() + duration * 60 * 60 * 1000 : null;
-        verificationCodes.set(code, { expires });
+        verificationCodes.set(code, { expires, usedBy: null });
         newCodes.push({ code, expires });
+        console.log(`[${new Date().toISOString()}] Generated code: ${code}, expires: ${expires ? new Date(expires).toISOString() : "permanent"}`);
       }
 
       const generateEmbed = new EmbedBuilder()
@@ -437,11 +469,13 @@ client.on("interactionCreate", async (interaction) => {
 
       await interaction.reply({ embeds: [generateEmbed], ephemeral: true });
     } else if (subcommand === "list") {
+      cleanExpiredCodesAndUsers();
       const codesList =
         Array.from(verificationCodes.entries())
           .map(([code, data]) => {
             const expiryText = data.expires ? `(expires <t:${Math.floor(data.expires / 1000)}:R>)` : "(permanent)";
-            return `\`${code}\` ${expiryText}`;
+            const usedText = data.usedBy ? `used by <@${data.usedBy}>` : "not used";
+            return `\`${code}\` ${expiryText}, ${usedText}`;
           })
           .join("\n") || "No codes available";
 
@@ -468,6 +502,7 @@ client.on("interactionCreate", async (interaction) => {
 
       if (verificationCodes.has(codeToRemove)) {
         verificationCodes.delete(codeToRemove);
+        console.log(`[${new Date().toISOString()}] Removed code: ${codeToRemove}`);
 
         const removeEmbed = new EmbedBuilder()
           .setColor("#E67E22")
@@ -496,6 +531,7 @@ client.on("interactionCreate", async (interaction) => {
         await interaction.reply({ embeds: [notFoundEmbed], ephemeral: true });
       }
     } else if (subcommand === "stats") {
+      cleanExpiredCodesAndUsers();
       const statsEmbed = new EmbedBuilder()
         .setColor("#9B59B6")
         .setTitle("📊 Verification System Statistics")
@@ -536,6 +572,15 @@ client.on("interactionCreate", async (interaction) => {
         .setFooter({ text: "Admin Panel • System Statistics" });
 
       await interaction.reply({ embeds: [statsEmbed], ephemeral: true });
+    } else if (subcommand === "unban") {
+      const userId = interaction.options.getString("user_id");
+      if (bannedUsers.has(userId)) {
+        bannedUsers.delete(userId);
+        console.log(`[${new Date().toISOString()}] Unbanned user ${userId}`);
+        await interaction.reply({ content: `User <@${userId}> has been unbanned.`, ephemeral: true });
+      } else {
+        await interaction.reply({ content: `User <@${userId}> is not banned.`, ephemeral: true });
+      }
     }
 
     return;
@@ -543,12 +588,39 @@ client.on("interactionCreate", async (interaction) => {
 
   if (commandName === "redeem") {
     const code = interaction.options.getString("code").toUpperCase();
+    console.log(`[${new Date().toISOString()}] Redeem attempt by ${interaction.user.id} with code: ${code}`);
+
+    cleanExpiredCodesAndUsers();
 
     if (verificationCodes.has(code)) {
       const codeData = verificationCodes.get(code);
-      const userExpiration = codeData.expires;
+      if (codeData.usedBy) {
+        console.log(`[${new Date().toISOString()}] Code ${code} already used by ${codeData.usedBy}`);
+        const usedEmbed = new EmbedBuilder()
+          .setColor("#E74C3C")
+          .setTitle("❌ Code Already Used")
+          .setDescription("**This verification code has already been redeemed by another user**")
+          .addFields({
+            name: "🔑 Access Denied",
+            value: "This code is single-use and has been claimed. Contact an administrator for a new verification code.",
+            inline: false,
+          })
+          .addFields({
+            name: "📝 Example",
+            value: "Use `/redeem MINES2024` or a new code provided by an admin (e.g., `A1B2C3D4`).",
+            inline: false,
+          })
+          .setTimestamp()
+          .setFooter({ text: "Professional Mine Prediction Service" });
 
-      verifiedUsers.set(interaction.user.id, { expires: userExpiration });
+        await interaction.reply({ embeds: [usedEmbed], ephemeral: true });
+        return;
+      }
+
+      verifiedUsers.set(interaction.user.id, { expires: codeData.expires });
+      verificationCodes.set(code, { ...codeData, usedBy: interaction.user.id });
+      verificationCodes.delete(code); // Remove code to prevent reuse
+      console.log(`[${new Date().toISOString()}] Code ${code} redeemed successfully by ${interaction.user.id}`);
 
       const successEmbed = new EmbedBuilder()
         .setColor("#27AE60")
@@ -561,7 +633,7 @@ client.on("interactionCreate", async (interaction) => {
         })
         .addFields({
           name: "⏰ Access Duration",
-          value: userExpiration ? `Expires <t:${Math.floor(userExpiration / 1000)}:R>` : "Permanent access",
+          value: codeData.expires ? `Expires <t:${Math.floor(codeData.expires / 1000)}:R>` : "Permanent access",
           inline: false,
         })
         .setTimestamp()
@@ -569,16 +641,23 @@ client.on("interactionCreate", async (interaction) => {
 
       await interaction.reply({ embeds: [successEmbed], ephemeral: true });
     } else {
+      console.log(`[${new Date().toISOString()}] Invalid code attempted: ${code}`);
       const errorEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
-        .setTitle("❌ Invalid Verification Code")
+        .setTitle("❌ Invalid or Expired Verification Code")
         .setDescription("**The code you entered is invalid or has expired**")
         .addFields({
           name: "🔑 Access Denied",
-          value: "Please contact the administrator to obtain a valid verification code.",
+          value: "Please check the code and try again, or contact an administrator to obtain a valid verification code.",
           inline: false,
         })
-        .setTimestamp();
+        .addFields({
+          name: "📝 Example",
+          value: "Use `/redeem MINES2024` or a code provided by an admin (e.g., `A1B2C3D4`).",
+          inline: false,
+        })
+        .setTimestamp()
+        .setFooter({ text: "Professional Mine Prediction Service" });
 
       await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
     }
@@ -587,6 +666,7 @@ client.on("interactionCreate", async (interaction) => {
 
   if (commandName === "predict") {
     try {
+      cleanExpiredCodesAndUsers();
       const userData = verifiedUsers.get(interaction.user.id);
       if (!userData) {
         const verificationRequiredEmbed = new EmbedBuilder()
@@ -600,31 +680,13 @@ client.on("interactionCreate", async (interaction) => {
           })
           .addFields({
             name: "📞 Contact Admin",
-            value: "Contact the server administrator to obtain your verification code.",
+            value: "Contact the server administrator to obtain a verification code.",
             inline: false,
           })
           .setTimestamp()
           .setFooter({ text: "Professional Mine Prediction Service • Verification Required" });
 
         await interaction.editReply({ embeds: [verificationRequiredEmbed] });
-        return;
-      }
-
-      if (userData.expires && Date.now() > userData.expires) {
-        verifiedUsers.delete(interaction.user.id);
-
-        const expiredEmbed = new EmbedBuilder()
-          .setColor("#E74C3C")
-          .setTitle("⏰ Access Expired")
-          .setDescription("**Your verification code has expired**")
-          .addFields({
-            name: "🔄 Renew Access",
-            value: "Please redeem a new verification code to continue using the prediction service.",
-            inline: false,
-          })
-          .setTimestamp();
-
-        await interaction.editReply({ embeds: [expiredEmbed] });
         return;
       }
 
@@ -714,7 +776,7 @@ client.on("interactionCreate", async (interaction) => {
 
       await interaction.editReply({ embeds: [embed] });
     } catch (error) {
-      console.error("Predict command error:", error);
+      console.error(`[${new Date().toISOString()}] Predict command error:`, error);
 
       const errorEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
@@ -730,7 +792,7 @@ client.on("interactionCreate", async (interaction) => {
       try {
         await interaction.editReply({ embeds: [errorEmbed] });
       } catch (replyError) {
-        console.error("Failed to send error response:", replyError);
+        console.error(`[${new Date().toISOString()}] Failed to send error response:`, replyError);
       }
     }
     return;
@@ -741,7 +803,6 @@ client.on("interactionCreate", async (interaction) => {
       console.log(`[${new Date().toISOString()}] Processing /submitresult for user ${interaction.user.id}`);
       await interaction.deferReply();
 
-      // Check if user is banned
       if (bannedUsers.has(interaction.user.id)) {
         const banEmbed = new EmbedBuilder()
           .setColor("#E74C3C")
@@ -764,7 +825,6 @@ client.on("interactionCreate", async (interaction) => {
       const numMines = interaction.options.getInteger("num_mines");
       const minePositions = interaction.options.getString("mine_positions");
 
-      // Validate inputs
       const startValidation = Date.now();
       const validation = validateResultInputs(serverSeedHash, clientSeed, nonce, numMines, minePositions);
       console.log(`[${new Date().toISOString()}] Validation took ${Date.now() - startValidation}ms`);
@@ -801,7 +861,6 @@ client.on("interactionCreate", async (interaction) => {
         return;
       }
 
-      // Check if server seed hash has been used
       if (usedServerSeeds.has(serverSeedHash)) {
         const usedSeedEmbed = new EmbedBuilder()
           .setColor("#E74C3C")
@@ -823,10 +882,10 @@ client.on("interactionCreate", async (interaction) => {
         return;
       }
 
-      // Check for spam or repetitive submissions
       const spamCheck = checkSpamAndRepetition(interaction.user.id, validation.parsedPositions);
       if (!spamCheck.isValid) {
         bannedUsers.set(interaction.user.id, { reason: spamCheck.reason, timestamp: Date.now() });
+        console.log(`[${new Date().toISOString()}] Banned user ${interaction.user.id} for: ${spamCheck.reason}`);
 
         const banEmbed = new EmbedBuilder()
           .setColor("#E74C3C")
@@ -848,7 +907,6 @@ client.on("interactionCreate", async (interaction) => {
         return;
       }
 
-      // Verify submission
       const startVerification = Date.now();
       const predictor = new MinePredictor(5, 5, 25 - numMines, serverSeedHash, nonce);
       const analysisResult = predictor.verifySubmission(clientSeed, nonce, numMines, validation.parsedPositions, serverSeedHash);
@@ -880,10 +938,8 @@ client.on("interactionCreate", async (interaction) => {
         return;
       }
 
-      // Mark server seed hash as used
       usedServerSeeds.set(serverSeedHash, { userId: interaction.user.id, timestamp: Date.now() });
 
-      // Update submissions
       const userSubmissions = submissions.get(interaction.user.id) || { count: 0, lastSubmission: 0, timestamps: [], positions: [] };
       userSubmissions.count += 1;
       userSubmissions.lastSubmission = Date.now();
@@ -960,7 +1016,7 @@ client.on("interactionCreate", async (interaction) => {
       .addFields({
         name: "⚠️ Important Notes",
         value:
-          "- Ensure all details are correct and match Rollbet’s fairness page.\n- Mine positions must be unique integers (0–24) separated by commas.\n- Submitting fake or incorrect data will be detected and may result in a ban.\n- Only one submission per server seed hash is allowed.",
+          "- Ensure all details are correct and match Rollbet’s fairness page.\n- Mine positions must be unique integers (0–24) separated by commas.\n- Submitting fake or incorrect data will be detected and may result in a ban.\n- Only one submission per server seed hash is allowed.\n- You can submit the same mine positions up to 3 times.",
         inline: false,
       })
       .addFields({
