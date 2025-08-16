@@ -2,6 +2,7 @@ import { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder } from "di
 import http from "http";
 import crypto from "crypto";
 import fetch from "node-fetch";
+import fs from "fs/promises";
 
 // Self-ping to keep Render free tier active
 const RENDER_URL = "https://mine-ka1i.onrender.com";
@@ -234,6 +235,26 @@ const usedServerSeeds = new Map();
 const bannedUsers = new Map();
 const ADMIN_USER_IDS = ["862245514313203712", "1321546526790651967"];
 
+async function saveVerifiedUsers() {
+  try {
+    await fs.writeFile("verifiedUsers.json", JSON.stringify([...verifiedUsers]));
+    console.log(`[${new Date().toISOString()}] Saved verifiedUsers to file`);
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Failed to save verifiedUsers:`, error);
+  }
+}
+
+async function loadVerifiedUsers() {
+  try {
+    const data = await fs.readFile("verifiedUsers.json", "utf8");
+    const loaded = JSON.parse(data);
+    loaded.forEach(([userId, data]) => verifiedUsers.set(userId, data));
+    console.log(`[${new Date().toISOString()}] Loaded ${verifiedUsers.size} verifiedUsers from file`);
+  } catch (error) {
+    console.log(`[${new Date().toISOString()}] No verifiedUsers file found, starting fresh`);
+  }
+}
+
 function validateResultInputs(serverSeedHash, clientSeed, nonce, numMines, minePositions) {
   const errors = [];
 
@@ -300,16 +321,22 @@ function checkSpamAndRepetition(userId, minePositions) {
 
 function cleanExpiredUsers() {
   const now = Date.now();
+  let changed = false;
   for (const [userId, data] of verifiedUsers.entries()) {
     if (data.expires && now > data.expires) {
       console.log(`[${new Date().toISOString()}] Removing expired user access: ${userId}`);
       verifiedUsers.delete(userId);
+      changed = true;
     }
+  }
+  if (changed) {
+    saveVerifiedUsers();
   }
 }
 
-client.once("ready", () => {
+client.once("ready", async () => {
   console.log(`[${new Date().toISOString()}] 🤖 ${client.user.tag} is online and ready to predict mines!`);
+  await loadVerifiedUsers();
 
   const commands = [
     new SlashCommandBuilder()
@@ -393,6 +420,7 @@ client.on("interactionCreate", async (interaction) => {
 
   if (commandName === "verify") {
     if (!ADMIN_USER_IDS.includes(interaction.user.id)) {
+      console.log(`[${new Date().toISOString()}] Unauthorized /verify attempt by ${interaction.user.id}`);
       const unauthorizedEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
         .setTitle("🚫 Access Denied")
@@ -408,6 +436,7 @@ client.on("interactionCreate", async (interaction) => {
     const expires = duration ? Date.now() + duration * 60 * 60 * 1000 : null;
 
     if (!/^\d{17,19}$/.test(userId)) {
+      console.log(`[${new Date().toISOString()}] Invalid user ID in /verify: ${userId}`);
       const invalidEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
         .setTitle("❌ Invalid User ID")
@@ -424,6 +453,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     verifiedUsers.set(userId, { expires });
+    await saveVerifiedUsers();
     console.log(`[${new Date().toISOString()}] Granted access to user ${userId}, expires: ${expires ? new Date(expires).toISOString() : "permanent"}`);
 
     const successEmbed = new EmbedBuilder()
@@ -466,6 +496,7 @@ client.on("interactionCreate", async (interaction) => {
         .setFooter({ text: "Professional Mine Prediction Service" });
 
       await user.send({ embeds: [userEmbed] });
+      console.log(`[${new Date().toISOString()}] Notified user ${userId} of verification`);
     } catch (error) {
       console.error(`[${new Date().toISOString()}] Failed to notify user ${userId}:`, error);
       await interaction.followUp({
@@ -478,6 +509,7 @@ client.on("interactionCreate", async (interaction) => {
 
   if (commandName === "admin") {
     if (!ADMIN_USER_IDS.includes(interaction.user.id)) {
+      console.log(`[${new Date().toISOString()}] Unauthorized /admin attempt by ${interaction.user.id}`);
       const unauthorizedEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
         .setTitle("🚫 Access Denied")
@@ -553,6 +585,8 @@ client.on("interactionCreate", async (interaction) => {
     try {
       cleanExpiredUsers();
       const userData = verifiedUsers.get(interaction.user.id);
+      console.log(`[${new Date().toISOString()}] /predict attempt by ${interaction.user.id}, verified: ${!!userData}, expires: ${userData?.expires ? new Date(userData.expires).toISOString() : "permanent"}`);
+      
       if (!userData) {
         const verificationRequiredEmbed = new EmbedBuilder()
           .setColor("#F39C12")
@@ -661,7 +695,7 @@ client.on("interactionCreate", async (interaction) => {
 
       await interaction.editReply({ embeds: [embed] });
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] Predict command error:`, error);
+      console.error(`[${new Date().toISOString()}] Predict command error for ${interaction.user.id}:`, error);
 
       const errorEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
