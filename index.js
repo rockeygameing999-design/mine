@@ -3,28 +3,31 @@ import http from "http";
 import crypto from "crypto";
 import fetch from "node-fetch";
 import { MongoClient } from "mongodb";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 // MongoDB setup
 const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017";
-const mongoClient = new MongoClient(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true });
+const mongoClient = new MongoClient(MONGO_URI);
 let db;
 
 // Self-ping to keep Render free tier active
-const RENDER_URL = "https://mine-ka1i.onrender.com";
-const PING_INTERVAL = 4 * 60 * 1000; // 4 minutes
+const RENDER_URL = process.env.RENDER_URL;
+const PING_INTERVAL = 14 * 60 * 1000; // 14 minutes to avoid Render's 15-minute inactivity limit
 
-async function startSelfPing() {
+if (RENDER_URL) {
   setInterval(async () => {
     try {
-      const response = await fetch(RENDER_URL, { method: "GET", timeout: 5000 });
-      console.log(`[${new Date().toISOString()}] Self-ping ${response.ok ? "successful" : `failed: ${response.status}`}`);
+      await fetch(RENDER_URL);
+      console.log(`[${new Date().toISOString()}] Self-ping successful.`);
     } catch (error) {
       console.error(`[${new Date().toISOString()}] Self-ping error: ${error.message}`);
     }
   }, PING_INTERVAL);
+} else {
+  console.warn("RENDER_URL environment variable is not set. Self-ping will not work.");
 }
-
-startSelfPing();
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
@@ -336,6 +339,23 @@ function cleanExpiredUsers() {
   }
 }
 
+function validateInputs(serverSeedHash, safeMines, nonce) {
+  const errors = [];
+  if (!/^[0-9a-fA-F]{64}$/.test(serverSeedHash)) {
+    errors.push("Server seed hash must be a 64-character hex string (0-9, a-f).");
+  }
+  if (!Number.isInteger(safeMines) || safeMines < 1 || safeMines > 24) {
+    errors.push("Number of safe mines must be an integer between 1 and 24.");
+  }
+  if (!Number.isInteger(nonce) || nonce < 0) {
+    errors.push("Nonce must be a non-negative integer.");
+  }
+  return {
+    isValid: errors.length === 0,
+    errors,
+  };
+}
+
 client.once("ready", async () => {
   try {
     await mongoClient.connect();
@@ -442,6 +462,7 @@ client.once("ready", async () => {
     await client.application.commands.set(commands);
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Bot startup error: ${error.message}`);
+    process.exit(1);
   }
 });
 
@@ -644,11 +665,11 @@ client.on("interactionCreate", async (interaction) => {
         const verifiedUsersList =
           verifiedUsers.size > 0
             ? Array.from(verifiedUsers.entries())
-                .map(([userId, data]) => {
-                  const expiryText = data.expires ? `(expires <t:${Math.floor(data.expires / 1000)}:R>)` : "(permanent)";
-                  return `<@${userId}> ${expiryText}`;
-                })
-                .join("\n")
+              .map(([userId, data]) => {
+                const expiryText = data.expires ? `(expires <t:${Math.floor(data.expires / 1000)}:R>)` : "(permanent)";
+                return `<@${userId}> ${expiryText}`;
+              })
+              .join("\n")
             : "No verified users";
 
         const statsEmbed = new EmbedBuilder()
@@ -826,34 +847,40 @@ client.on("interactionCreate", async (interaction) => {
 
       await interaction.editReply({ embeds: [embed] });
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] Predict command error: ${error.message}`);
+      console.error(`[${new Date().toISOString()}] Prediction error: ${error.message}`);
       const errorEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
         .setTitle("❌ Prediction Error")
-        .setDescription("**An error occurred while processing your prediction**")
+        .setDescription("**An unexpected error occurred while processing your request**")
         .addFields({
           name: "🔧 Troubleshooting",
-          value: "Please check your input parameters and try again. If the issue persists, contact an administrator.",
+          value: "Please ensure all parameters are correct and try again. If the issue persists, contact an admin.",
           inline: false,
         })
         .setTimestamp();
       await interaction.editReply({ embeds: [errorEmbed] });
     }
-    return;
   }
 
   if (commandName === "submitresult") {
     try {
+      cleanExpiredUsers();
+      const userData = verifiedUsers.get(interaction.user.id);
+      if (!userData) {
+        const verificationRequiredEmbed = new EmbedBuilder()
+          .setColor("#F39C12")
+          .setTitle("🔒 Verification Required")
+          .setDescription("**You must be verified by an admin to use this feature**")
+          .setTimestamp();
+        await interaction.editReply({ embeds: [verificationRequiredEmbed] });
+        return;
+      }
+
       if (bannedUsers.has(interaction.user.id)) {
         const banEmbed = new EmbedBuilder()
           .setColor("#E74C3C")
-          .setTitle("🚫 Submission Banned")
-          .setDescription("**You have been banned from submitting due to suspicious activity**")
-          .addFields({
-            name: "📞 Next Steps",
-            value: "Open a support ticket to request an unban.",
-            inline: false,
-          })
+          .setTitle("🚫 Access Denied")
+          .setDescription("**You are temporarily banned from submitting results due to abuse**")
           .setTimestamp();
         await interaction.editReply({ embeds: [banEmbed] });
         return;
@@ -863,33 +890,17 @@ client.on("interactionCreate", async (interaction) => {
       const clientSeed = interaction.options.getString("client_seed");
       const nonce = interaction.options.getInteger("nonce");
       const numMines = interaction.options.getInteger("num_mines");
-      const minePositions = interaction.options.getString("mine_positions");
+      const minePositionsString = interaction.options.getString("mine_positions");
 
-      const validation = validateResultInputs(serverSeedHash, clientSeed, nonce, numMines, minePositions);
+      const validation = validateResultInputs(serverSeedHash, clientSeed, nonce, numMines, minePositionsString);
       if (!validation.isValid) {
         const errorEmbed = new EmbedBuilder()
           .setColor("#E74C3C")
-          .setTitle("❌ Invalid Submission Parameters")
+          .setTitle("❌ Invalid Result Submission")
           .setDescription("**Input validation failed - please check your parameters**")
           .addFields({
             name: "❗ Validation Errors",
             value: validation.errors.join("\n"),
-            inline: false,
-          })
-          .addFields({
-            name: "✅ Required Format",
-            value:
-              "**Server Seed Hash:** 64 character hex string (0-9, a-f)\n**Client Seed:** Non-empty string (e.g., VqsjloxT6b)\n**Nonce:** Non-negative integer (e.g., 3002)\n**Number of Mines:** Integer between 1-24\n**Mine Positions:** Comma-separated integers (e.g., 3,7,12,18,22)",
-            inline: false,
-          })
-          .addFields({
-            name: "📝 Example",
-            value: "/submitresult server_seed_hash: aa65cf73b921... client_seed: VqsjloxT6b nonce: 3002 num_mines: 5 mine_positions: 3,7,12,18,22",
-            inline: false,
-          })
-          .addFields({
-            name: "⚠️ Warning",
-            value: "Submitting fake or incorrect data will be detected and may result in a ban.",
             inline: false,
           })
           .setTimestamp();
@@ -897,235 +908,151 @@ client.on("interactionCreate", async (interaction) => {
         return;
       }
 
-      if (usedServerSeeds.has(serverSeedHash)) {
-        const usedSeedEmbed = new EmbedBuilder()
-          .setColor("#E74C3C")
-          .setTitle("❌ Server Seed Hash Already Used")
-          .setDescription("**This server seed hash has already been submitted**")
-          .addFields({
-            name: "🔧 Troubleshooting",
-            value: "Ensure you are using a new, unique server seed hash from Rollbet's fairness page.",
-            inline: false,
-          })
-          .addFields({
-            name: "⚠️ Warning",
-            value: "Submitting fake or incorrect data will be detected and may result in a ban.",
-            inline: false,
-          })
-          .setTimestamp();
-        await interaction.editReply({ embeds: [usedSeedEmbed] });
-        return;
-      }
-
-      const spamCheck = checkSpamAndRepetition(interaction.user.id, validation.parsedPositions);
+      const { parsedPositions } = validation;
+      const spamCheck = checkSpamAndRepetition(interaction.user.id, parsedPositions);
       if (!spamCheck.isValid) {
-        bannedUsers.set(interaction.user.id, { reason: spamCheck.reason, timestamp: Date.now() });
-        const banEmbed = new EmbedBuilder()
+        const spamEmbed = new EmbedBuilder()
           .setColor("#E74C3C")
-          .setTitle("🚫 Submission Banned")
-          .setDescription("**You have been banned from submitting due to suspicious activity**")
-          .addFields({
-            name: "❗ Reason",
-            value: spamCheck.reason,
-            inline: false,
-          })
-          .addFields({
-            name: "📞 Next Steps",
-            value: "Open a support ticket to request an unban.",
-            inline: false,
-          })
+          .setTitle("⚠️ Rate Limit Exceeded")
+          .setDescription(`**${spamCheck.reason}** Please wait a moment before trying again.`)
           .setTimestamp();
-        await interaction.editReply({ embeds: [banEmbed] });
+        await interaction.editReply({ embeds: [spamEmbed] });
+        if (submissions.get(interaction.user.id).timestamps.length >= 10) {
+          bannedUsers.add(interaction.user.id);
+          console.warn(`[${new Date().toISOString()}] User <@${interaction.user.id}> banned for spamming.`);
+        }
         return;
       }
 
-      const predictor = new MinePredictor(5, 5, 25 - numMines, serverSeedHash, nonce);
-      const analysisResult = predictor.verifySubmission(clientSeed, nonce, numMines, validation.parsedPositions, serverSeedHash);
-      if (!analysisResult.isValid) {
-        const invalidEmbed = new EmbedBuilder()
-          .setColor("#E74C3C")
-          .setTitle("❌ Invalid Game Data")
-          .setDescription("**The provided game data could not be verified**")
+      const predictor = new MinePredictor(5, 5, numMines);
+      const verification = predictor.verifySubmission(clientSeed, nonce, numMines, parsedPositions, serverSeedHash);
+
+      if (verification.isValid) {
+        const submissionsCollection = db.collection("submissions");
+        await submissionsCollection.insertOne({
+          userId: interaction.user.id,
+          serverSeedHash,
+          clientSeed,
+          nonce,
+          numMines,
+          minePositions: parsedPositions,
+          timestamp: new Date(),
+        });
+
+        const successEmbed = new EmbedBuilder()
+          .setColor("#27AE60")
+          .setTitle("✅ Result Submitted Successfully")
+          .setDescription("**Thank you for submitting your game result!**")
           .addFields({
-            name: "❗ Error",
-            value: analysisResult.error,
+            name: "📊 Submission Details",
+            value: `**Mines:** ${numMines}\n**Nonce:** ${nonce}\n**Positions:** ${parsedPositions.join(", ")}`,
             inline: false,
           })
           .addFields({
-            name: "🔧 Troubleshooting",
-            value: "Ensure you entered the correct server seed hash, client seed, nonce, number of mines, and mine positions from Rollbet's fairness page.",
-            inline: false,
-          })
-          .addFields({
-            name: "⚠️ Warning",
-            value: "Submitting fake or incorrect data will be detected and may result in a ban.",
+            name: "✨ What Happens Next?",
+            value:
+              "This data helps the prediction model learn and improve its accuracy. You are contributing to a better service for everyone!",
             inline: false,
           })
           .setTimestamp();
-        await interaction.editReply({ embeds: [invalidEmbed] });
-        return;
+        await interaction.editReply({ embeds: [successEmbed] });
+      } else {
+        const errorEmbed = new EmbedBuilder()
+          .setColor("#E74C3C")
+          .setTitle("❌ Submission Failed")
+          .setDescription(`**${verification.error}**`)
+          .setTimestamp();
+        await interaction.editReply({ embeds: [errorEmbed] });
       }
-
-      usedServerSeeds.set(serverSeedHash, { userId: interaction.user.id, timestamp: Date.now() });
-      const userSubmissions = submissions.get(interaction.user.id) || { count: 0, lastSubmission: 0, timestamps: [], positions: [] };
-      userSubmissions.count += 1;
-      userSubmissions.lastSubmission = Date.now();
-      submissions.set(interaction.user.id, userSubmissions);
-
-      const resultEmbed = new EmbedBuilder()
-        .setColor("#3498DB")
-        .setTitle("📊 Game Result Analysis")
-        .setDescription("**Your submitted game result has been verified and analyzed**")
-        .addFields({
-          name: "💣 Submitted Mines",
-          value: `\`${validation.parsedPositions.join(", ")}\``,
-          inline: true,
-        })
-        .addFields({
-          name: "📍 Actual Grid",
-          value: `\`\`\`\n${predictor.getGridDisplay(analysisResult.actualGrid)}\`\`\``,
-          inline: false,
-        })
-        .addFields({
-          name: "🔑 Submission Details",
-          value: `Server Seed Hash: \`${serverSeedHash.substring(0, 8)}...\`\nClient Seed: \`${clientSeed}\`\nNonce: ${nonce}\nMines: ${numMines}`,
-          inline: false,
-        })
-        .setTimestamp()
-        .setFooter({ text: "Professional Mine Prediction Service • Result Analysis" });
-
-      await interaction.editReply({ embeds: [resultEmbed] });
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] Submitresult command error: ${error.message}`);
+      console.error(`[${new Date().toISOString()}] Submit result error: ${error.message}`);
       const errorEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
         .setTitle("❌ Submission Error")
-        .setDescription("**An error occurred while processing your submission**")
+        .setDescription("**An unexpected error occurred while processing your submission**")
         .addFields({
           name: "🔧 Troubleshooting",
-          value: "Please check your input parameters and try again. If the issue persists, contact an administrator.",
-          inline: false,
-        })
-        .addFields({
-          name: "⚠️ Warning",
-          value: "Submitting fake or incorrect data will be detected and may result in a ban.",
+          value: "Please ensure all parameters are correct and try again. If the issue persists, contact an admin.",
           inline: false,
         })
         .setTimestamp();
       await interaction.editReply({ embeds: [errorEmbed] });
     }
-    return;
-  }
-
-  if (commandName === "howtosubmitresult") {
-    const guideEmbed = new EmbedBuilder()
-      .setColor("#3498DB")
-      .setTitle("📝 How to Submit Game Results")
-      .setDescription("**Submitting your Rollbet game results helps improve our prediction accuracy for everyone!**")
-      .addFields({
-        name: "🎯 Why Submit?",
-        value: "Your submissions enhance our heatmap, making predictions more accurate. Plus, you’ll climb the leaderboard and earn bragging rights!",
-        inline: false,
-      })
-      .addFields({
-        name: "📋 How to Submit",
-        value:
-          "1. Go to Rollbet’s fairness page after your game.\n2. Copy the **server seed hash**, **client seed**, **nonce**, **number of mines**, and note the **mine positions** (tile numbers 0–24).\n3. Use the `/submitresult` command with these details.\n4. Example: `/submitresult server_seed_hash: aa65cf73b921... client_seed: VqsjloxT6b nonce: 3002 num_mines: 5 mine_positions: 3,7,12,18,22`",
-        inline: false,
-      })
-      .addFields({
-        name: "⚠️ Important Notes",
-        value:
-          "- Ensure all details are correct and match Rollbet’s fairness page.\n- Mine positions must be unique integers (0–24) separated by commas.\n- Submitting fake or incorrect data will be detected and may result in a ban.\n- Only one submission per server seed hash is allowed.\n- You can submit the same mine positions up to 3 times.",
-        inline: false,
-      })
-      .addFields({
-        name: "📞 Need Help?",
-        value: "Contact an administrator or open a support ticket if you encounter issues.",
-        inline: false,
-      })
-      .setTimestamp()
-      .setFooter({ text: "Professional Mine Prediction Service • Submission Guide" });
-
-    await interaction.reply({ embeds: [guideEmbed] });
-    return;
   }
 
   if (commandName === "myresults") {
-    const userSubmissions = submissions.get(interaction.user.id) || { count: 0, lastSubmission: 0 };
-    const resultsEmbed = new EmbedBuilder()
-      .setColor("#3498DB")
-      .setTitle("📊 Your Submission Stats")
-      .setDescription(`**${interaction.user.username}'s contribution to the prediction service**`)
-      .addFields({
-        name: "📤 Total Submissions",
-        value: `${userSubmissions.count} results submitted`,
-        inline: true,
-      })
-      .addFields({
-        name: "⏰ Last Submission",
-        value: userSubmissions.lastSubmission
-          ? `<t:${Math.floor(userSubmissions.lastSubmission / 1000)}:R>`
-          : "No submissions yet",
-        inline: true,
-      })
-      .addFields({
-        name: "🎯 Keep Contributing",
-        value: "Use `/submitresult` to submit more game results and improve our predictions!",
-        inline: false,
-      })
-      .setTimestamp()
-      .setFooter({ text: "Professional Mine Prediction Service • Your Stats" });
-
-    await interaction.reply({ embeds: [resultsEmbed] });
-    return;
+    try {
+      const submissionsCollection = db.collection("submissions");
+      const userSubmissions = await submissionsCollection.countDocuments({ userId: interaction.user.id });
+      const embed = new EmbedBuilder()
+        .setColor("#3498DB")
+        .setTitle("📊 Your Submission Stats")
+        .setDescription(`You have submitted **${userSubmissions}** game results.`)
+        .setTimestamp();
+      await interaction.reply({ embeds: [embed] });
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] Myresults command error: ${error.message}`);
+      await interaction.reply({ content: "An error occurred while fetching your submission stats.", ephemeral: true });
+    }
   }
 
   if (commandName === "leaderboard") {
-    const sortedSubmissions = Array.from(submissions.entries())
-      .sort((a, b) => b[1].count - a[1].count)
-      .slice(0, 10);
+    try {
+      const submissionsCollection = db.collection("submissions");
+      const leaderboard = await submissionsCollection.aggregate([
+        { $group: { _id: "$userId", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 }
+      ]).toArray();
 
-    const leaderboardEmbed = new EmbedBuilder()
-      .setColor("#FFD700")
-      .setTitle("🏆 Submission Leaderboard")
-      .setDescription("**Top contributors to the Rollbet mine prediction service**");
+      const leaderboardText = leaderboard.length > 0
+        ? leaderboard.map((entry, index) => `${index + 1}. <@${entry._id}> - ${entry.count} submissions`).join("\n")
+        : "No one has submitted results yet.";
 
-    if (sortedSubmissions.length === 0) {
-      leaderboardEmbed.addFields({
-        name: "📊 No Submissions Yet",
-        value: "Be the first to submit a result with `/submitresult`!",
-        inline: false,
-      });
-    } else {
-      const fields = sortedSubmissions.map(([userId, data], index) => ({
-        name: `#${index + 1} <@${userId}>`,
-        value: `${data.count} submissions`,
-        inline: true,
-      }));
-      leaderboardEmbed.addFields(fields);
+      const embed = new EmbedBuilder()
+        .setColor("#F1C40F")
+        .setTitle("🏆 Top Result Submitters Leaderboard")
+        .setDescription(leaderboardText)
+        .setTimestamp();
+      await interaction.reply({ embeds: [embed] });
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] Leaderboard command error: ${error.message}`);
+      await interaction.reply({ content: "An error occurred while fetching the leaderboard.", ephemeral: true });
     }
+  }
 
-    leaderboardEmbed.setTimestamp().setFooter({ text: "Professional Mine Prediction Service • Leaderboard" });
-    await interaction.reply({ embeds: [leaderboardEmbed] });
+  if (commandName === "howtosubmitresult") {
+    const howToEmbed = new EmbedBuilder()
+      .setColor("#3498DB")
+      .setTitle("💡 How to Submit a Game Result")
+      .setDescription("**Why submit a result?** Your submissions help train the prediction model, making it more accurate for everyone.")
+      .addFields(
+        {
+          name: "1. Get the Data",
+          value:
+            "After a game on Rollbet, copy the **Server Seed Hash**, **Client Seed**, and **Nonce** from the game details. You'll also need to count the total number of mines and list their positions (from 0 to 24, from top-left to bottom-right).",
+          inline: false,
+        },
+        {
+          name: "2. Use the Command",
+          value:
+            "Use the `/submitresult` command and fill in the options. For example:\n" +
+            "• `server_seed_hash`: `a1b2c3d4...`\n" +
+            "• `client_seed`: `VqsjloxT6b`\n" +
+            "• `nonce`: `3002`\n" +
+            "• `num_mines`: `5`\n" +
+            "• `mine_positions`: `3,7,12,18,22`",
+          inline: false,
+        },
+      )
+      .setTimestamp();
+    await interaction.reply({ embeds: [howToEmbed], ephemeral: true });
   }
 });
 
-function validateInputs(serverSeedHash, safeMines, nonce) {
-  const errors = [];
-  if (!/^[0-9a-fA-F]{64}$/.test(serverSeedHash)) {
-    errors.push("Server seed hash must be a 64-character hex string (0-9, a-f).");
-  }
-  if (!Number.isInteger(safeMines) || safeMines < 1 || safeMines > 24) {
-    errors.push("Safe mines must be an integer between 1 and 24.");
-  }
-  if (!Number.isInteger(nonce) || nonce < 0) {
-    errors.push("Nonce must be a non-negative integer.");
-  }
-  return {
-    isValid: errors.length === 0,
-    errors,
-  };
+const TOKEN = process.env.DISCORD_TOKEN;
+if (!TOKEN) {
+  console.error("DISCORD_TOKEN environment variable not set. Bot cannot start.");
+  process.exit(1);
 }
-
-client.login(process.env.DISCORD_BOT_TOKEN);
+client.login(TOKEN);
