@@ -6,7 +6,7 @@ import fs from "fs/promises";
 
 // Self-ping to keep Render free tier active
 const RENDER_URL = "https://mine-ka1i.onrender.com";
-const PING_INTERVAL = 10 * 60 * 1000; // 10 minutes
+const PING_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
 function startSelfPing() {
   setInterval(async () => {
@@ -41,7 +41,7 @@ const server = http.createServer((req, res) => {
   );
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
   console.log(`[${new Date().toISOString()}] 🌐 HTTP server running on port ${PORT}`);
 });
@@ -237,8 +237,8 @@ const ADMIN_USER_IDS = ["862245514313203712", "1321546526790651967"];
 
 async function saveVerifiedUsers() {
   try {
-    await fs.writeFile("verifiedUsers.json", JSON.stringify([...verifiedUsers]));
-    console.log(`[${new Date().toISOString()}] Saved verifiedUsers to file`);
+    await fs.writeFile("verifiedUsers.json", JSON.stringify([...verifiedUsers], null, 2), { encoding: "utf8", flag: "w" });
+    console.log(`[${new Date().toISOString()}] Saved verifiedUsers to file: ${[...verifiedUsers.keys()]}`);
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Failed to save verifiedUsers:`, error);
   }
@@ -249,7 +249,7 @@ async function loadVerifiedUsers() {
     const data = await fs.readFile("verifiedUsers.json", "utf8");
     const loaded = JSON.parse(data);
     loaded.forEach(([userId, data]) => verifiedUsers.set(userId, data));
-    console.log(`[${new Date().toISOString()}] Loaded ${verifiedUsers.size} verifiedUsers from file`);
+    console.log(`[${new Date().toISOString()}] Loaded ${verifiedUsers.size} verifiedUsers: ${[...verifiedUsers.keys()]}`);
   } catch (error) {
     console.log(`[${new Date().toISOString()}] No verifiedUsers file found, starting fresh`);
   }
@@ -403,6 +403,12 @@ client.once("ready", async () => {
           .setName("unban")
           .setDescription("Unban a user from submitting results")
           .addStringOption((option) => option.setName("user_id").setDescription("User ID to unban").setRequired(true)),
+      )
+      .addSubcommand((subcommand) =>
+        subcommand
+          .setName("revoke")
+          .setDescription("Revoke a user's access to the prediction service")
+          .addStringOption((option) => option.setName("user_id").setDescription("User ID to revoke access").setRequired(true)),
       ),
   ];
 
@@ -454,7 +460,7 @@ client.on("interactionCreate", async (interaction) => {
 
     verifiedUsers.set(userId, { expires });
     await saveVerifiedUsers();
-    console.log(`[${new Date().toISOString()}] Granted access to user ${userId}, expires: ${expires ? new Date(expires).toISOString() : "permanent"}`);
+    console.log(`[${new Date().toISOString()}] Granted access to user ${userId}, expires: ${expires ? new Date(expires).toISOString() : "permanent"}, verifiedUsers: ${[...verifiedUsers.keys()]}`);
 
     const successEmbed = new EmbedBuilder()
       .setColor("#27AE60")
@@ -576,6 +582,16 @@ client.on("interactionCreate", async (interaction) => {
       } else {
         await interaction.reply({ content: `User <@${userId}> is not banned.`, ephemeral: true });
       }
+    } else if (subcommand === "revoke") {
+      const userId = interaction.options.getString("user_id");
+      if (verifiedUsers.has(userId)) {
+        verifiedUsers.delete(userId);
+        await saveVerifiedUsers();
+        console.log(`[${new Date().toISOString()}] Revoked access for user ${userId}, verifiedUsers: ${[...verifiedUsers.keys()]}`);
+        await interaction.reply({ content: `Access revoked for <@${userId}>.`, ephemeral: true });
+      } else {
+        await interaction.reply({ content: `<@${userId}> does not have access.`, ephemeral: true });
+      }
     }
 
     return;
@@ -585,7 +601,7 @@ client.on("interactionCreate", async (interaction) => {
     try {
       cleanExpiredUsers();
       const userData = verifiedUsers.get(interaction.user.id);
-      console.log(`[${new Date().toISOString()}] /predict attempt by ${interaction.user.id}, verified: ${!!userData}, expires: ${userData?.expires ? new Date(userData.expires).toISOString() : "permanent"}`);
+      console.log(`[${new Date().toISOString()}] /predict attempt by ${interaction.user.id}, verified: ${!!userData}, expires: ${userData?.expires ? new Date(userData.expires).toISOString() : "permanent"}, verifiedUsers: ${[...verifiedUsers.keys()]}`);
       
       if (!userData) {
         const verificationRequiredEmbed = new EmbedBuilder()
