@@ -224,7 +224,7 @@ client.once("ready", () => {
       )
       .addIntegerOption((option) => option.setName("nonce").setDescription("Nonce value (integer)").setRequired(true)),
     new SlashCommandBuilder()
-      .setName("admin .
+      .setName("admin")
       .setDescription("Admin panel for managing verification system")
       .addSubcommand((subcommand) =>
         subcommand
@@ -362,244 +362,244 @@ client.on("interactionCreate", async (interaction) => {
             value: `${verificationCodes.size} active codes`,
             inline: true,
           })
-          .setTimestamp();
+        .setTimestamp();
 
-        await interaction.reply({ embeds: [removeEmbed], flags: [4096] });
-      } else {
-        const notFoundEmbed = new EmbedBuilder()
-          .setColor("#E74C3C")
-          .setTitle("❌ Code Not Found")
-          .setDescription("**The specified verification code does not exist**")
-          .setTimestamp();
+      await interaction.reply({ embeds: [removeEmbed], flags: [4096] });
+    } else {
+      const notFoundEmbed = new EmbedBuilder()
+        .setColor("#E74C3C")
+        .setTitle("❌ Code Not Found")
+        .setDescription("**The specified verification code does not exist**")
+        .setTimestamp();
 
-        await interaction.reply({ embeds: [notFoundEmbed], flags: [4096] });
-      }
-    } else if (subcommand === "stats") {
-      const statsEmbed = new EmbedBuilder()
-        .setColor("#9B59B6")
-        .setTitle("📊 Verification System Statistics")
-        .setDescription("**Current system status and metrics**")
-        .addFields(
-          {
-            name: "🔑 Active Codes",
-            value: `${verificationCodes.size} codes`,
-            inline: true,
-          },
-          {
-            name: "✅ Verified Users",
-            value: `${verifiedUsers.size} users`,
-            inline: true,
-          },
-          {
-            name: "🤖 Bot Status",
-            value: "Online & Active",
-            inline: true,
-          },
-        )
-        .addFields({
-          name: "⏱️ System Uptime",
-          value: `${Math.floor(process.uptime() / 60)} minutes`,
-          inline: false,
-        })
-        .setTimestamp()
-        .setFooter({ text: "Admin Panel • System Statistics" });
-
-      await interaction.reply({ embeds: [statsEmbed], flags: [4096] });
+      await interaction.reply({ embeds: [notFoundEmbed], flags: [4096] });
     }
+  } else if (subcommand === "stats") {
+    const statsEmbed = new EmbedBuilder()
+      .setColor("#9B59B6")
+      .setTitle("📊 Verification System Statistics")
+      .setDescription("**Current system status and metrics**")
+      .addFields(
+        {
+          name: "🔑 Active Codes",
+          value: `${verificationCodes.size} codes`,
+          inline: true,
+        },
+        {
+          name: "✅ Verified Users",
+          value: `${verifiedUsers.size} users`,
+          inline: true,
+        },
+        {
+          name: "🤖 Bot Status",
+          value: "Online & Active",
+          inline: true,
+        },
+      )
+      .addFields({
+        name: "⏱️ System Uptime",
+        value: `${Math.floor(process.uptime() / 60)} minutes`,
+        inline: false,
+      })
+      .setTimestamp()
+      .setFooter({ text: "Admin Panel • System Statistics" });
 
-    return;
+    await interaction.reply({ embeds: [statsEmbed], flags: [4096] });
   }
 
-  if (commandName === "redeem") {
-    const code = interaction.options.getString("code").toUpperCase();
+  return;
+}
 
-    cleanExpiredCodes();
+if (commandName === "redeem") {
+  const code = interaction.options.getString("code").toUpperCase();
+
+  cleanExpiredCodes();
+  cleanExpiredUsers();
+
+  if (verificationCodes.has(code)) {
+    const codeData = verificationCodes.get(code);
+    const userExpiration = codeData.expires;
+
+    verifiedUsers.set(interaction.user.id, { expires: userExpiration });
+
+    const successEmbed = new EmbedBuilder()
+      .setColor("#27AE60")
+      .setTitle("✅ Code Redeemed Successfully")
+      .setDescription("**You have successfully redeemed your verification code!**")
+      .addFields({
+        name: "🎯 Access Granted",
+        value: "You can now use the `/predict` command to analyze mine patterns.",
+        inline: false,
+      })
+      .addFields({
+        name: "⏰ Access Duration",
+        value: userExpiration ? `Expires <t:${Math.floor(userExpiration / 1000)}:R>` : "Permanent access",
+        inline: false,
+      })
+      .setTimestamp()
+      .setFooter({ text: "Professional Mine Prediction Service" });
+
+    await interaction.reply({ embeds: [successEmbed], flags: [4096] });
+  } else {
+    const errorEmbed = new EmbedBuilder()
+      .setColor("#E74C3C")
+      .setTitle("❌ Invalid Verification Code")
+      .setDescription("**The code you entered is invalid or has expired**")
+      .addFields({
+        name: "🔑 Access Denied",
+        value: "Please contact the administrator to obtain a valid verification code.",
+        inline: false,
+      })
+      .setTimestamp();
+
+    await interaction.reply({ embeds: [errorEmbed], flags: [4096] });
+  }
+  return;
+}
+
+if (commandName === "predict") {
+  try {
     cleanExpiredUsers();
 
-    if (verificationCodes.has(code)) {
-      const codeData = verificationCodes.get(code);
-      const userExpiration = codeData.expires;
-
-      verifiedUsers.set(interaction.user.id, { expires: userExpiration });
-
-      const successEmbed = new EmbedBuilder()
-        .setColor("#27AE60")
-        .setTitle("✅ Code Redeemed Successfully")
-        .setDescription("**You have successfully redeemed your verification code!**")
+    const userData = verifiedUsers.get(interaction.user.id);
+    if (!userData) {
+      const verificationRequiredEmbed = new EmbedBuilder()
+        .setColor("#F39C12")
+        .setTitle("🔒 Verification Required")
+        .setDescription("**You must redeem a verification code to use the mine prediction service**")
         .addFields({
-          name: "🎯 Access Granted",
-          value: "You can now use the `/predict` command to analyze mine patterns.",
+          name: "🎯 Get Access",
+          value: "Use `/redeem <code>` command with a valid verification code to access predictions.",
           inline: false,
         })
         .addFields({
-          name: "⏰ Access Duration",
-          value: userExpiration ? `Expires <t:${Math.floor(userExpiration / 1000)}:R>` : "Permanent access",
+          name: "📞 Contact Admin",
+          value: "Contact the server administrator to obtain your verification code.",
           inline: false,
         })
         .setTimestamp()
-        .setFooter({ text: "Professional Mine Prediction Service" });
+        .setFooter({ text: "Professional Mine Prediction Service • Verification Required" });
 
-      await interaction.reply({ embeds: [successEmbed], flags: [4096] });
-    } else {
-      const errorEmbed = new EmbedBuilder()
+      await interaction.editReply({ embeds: [verificationRequiredEmbed] });
+      return;
+    }
+
+    if (userData.expires && Date.now() > userData.expires) {
+      verifiedUsers.delete(interaction.user.id);
+
+      const expiredEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
-        .setTitle("❌ Invalid Verification Code")
-        .setDescription("**The code you entered is invalid or has expired**")
+        .setTitle("⏰ Access Expired")
+        .setDescription("**Your verification code has expired**")
         .addFields({
-          name: "🔑 Access Denied",
-          value: "Please contact the administrator to obtain a valid verification code.",
+          name: "🔄 Renew Access",
+          value: "Please redeem a new verification code to continue using the prediction service.",
           inline: false,
         })
         .setTimestamp();
 
-      await interaction.reply({ embeds: [errorEmbed], flags: [4096] });
+      await interaction.editReply({ embeds: [expiredEmbed] });
+      return;
     }
-    return;
-  }
 
-  if (commandName === "predict") {
+    const serverSeedHash = interaction.options.getString("server_seed_hash");
+    const safeMines = interaction.options.getInteger("safe_mines");
+    const nonce = interaction.options.getInteger("nonce");
+
+    const validation = validateInputs(serverSeedHash, safeMines, nonce);
+    if (!validation.isValid) {
+      const errorEmbed = new EmbedBuilder()
+        .setColor("#E74C3C")
+        .setTitle("❌ Invalid Analysis Parameters")
+        .setDescription("**Input validation failed - please check your parameters**")
+        .addFields({
+          name: "❗ Validation Errors",
+          value: validation.errors.join("\n"),
+          inline: false,
+        })
+        .addFields({
+          name: "✅ Required Format",
+          value:
+            "**Server Seed Hash:** 64 character hex string (0-9, a-f)\n**Safe Mines:** Integer between 1-24\n**Nonce:** Positive integer (1-999999999)",
+          inline: false,
+        })
+        .addFields({
+          name: "📝 Example",
+          value: "Server Hash: `a1b2c3d4e5f6...` (64 chars)\nSafe Mines: `5`\nNonce: `12345`",
+          inline: false,
+        })
+        .setTimestamp();
+
+      await interaction.editReply({ embeds: [errorEmbed] });
+      return;
+    }
+
+    const predictor = new MinePredictor(5, 5, safeMines, serverSeedHash, nonce);
+    const verification = predictor.getVerificationData();
+    const analysis = predictor.getAnalysis();
+
+    const embed = new EmbedBuilder()
+      .setColor("#2C3E50")
+      .setTitle("🔮 Advanced Mine Pattern Predictions")
+      .setDescription(`**${analysis.method.charAt(0).toUpperCase() + analysis.method.slice(1)} Analysis for Rollbet**`);
+
+    embed.addFields(
+      {
+        name: "🎯 Prediction Method",
+        value: `Algorithm: ${analysis.patternType}\nMethod: ${analysis.method.charAt(0).toUpperCase() + analysis.method.slice(1)}\nWebsite: Rollbet`,
+        inline: true,
+      },
+      {
+        name: "📊 Analysis Data",
+        value: `Grid: 5×5\nSafe Mines: ${safeMines}\nDangerous Mines: ${predictor.mines}\nRisk Level: ${analysis.riskLevel}`,
+        inline: true,
+      },
+      {
+        name: "🔑 Seed Information",
+        value: `Server Hash: \`${serverSeedHash.substring(0, 8)}...\`\nNonce: ${nonce}\nEntropy: ${analysis.entropyScore}%`,
+        inline: true,
+      },
+    );
+
+    const gridDisplay = predictor.getGridDisplay();
+    embed.addFields({
+      name: "🎯 Predicted Mine Locations",
+      value: `\`\`\`\n${gridDisplay}\`\`\``,
+      inline: false,
+    });
+
+    embed.addFields({
+      name: "🔍 Verification Signature",
+      value: `\`${verification.hash}\``,
+      inline: false,
+    });
+
+    embed.setFooter({
+      text: `Professional Mine Prediction Service • ${analysis.method.charAt(0).toUpperCase() + analysis.method.slice(1)} Algorithm v5.0`,
+    });
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (error) {
+    console.error("Predict command error:", error);
+
+    const errorEmbed = new EmbedBuilder()
+      .setColor("#E74C3C")
+      .setTitle("❌ Prediction Error")
+      .setDescription("**An error occurred while processing your prediction**")
+      .addFields({
+        name: "🔧 Troubleshooting",
+        value: "Please check your input parameters and try again. If the issue persists, contact an administrator.",
+        inline: false,
+      })
+      .setTimestamp();
+
     try {
-      cleanExpiredUsers();
-
-      const userData = verifiedUsers.get(interaction.user.id);
-      if (!userData) {
-        const verificationRequiredEmbed = new EmbedBuilder()
-          .setColor("#F39C12")
-          .setTitle("🔒 Verification Required")
-          .setDescription("**You must redeem a verification code to use the mine prediction service**")
-          .addFields({
-            name: "🎯 Get Access",
-            value: "Use `/redeem <code>` command with a valid verification code to access predictions.",
-            inline: false,
-          })
-          .addFields({
-            name: "📞 Contact Admin",
-            value: "Contact the server administrator to obtain your verification code.",
-            inline: false,
-          })
-          .setTimestamp()
-          .setFooter({ text: "Professional Mine Prediction Service • Verification Required" });
-
-        await interaction.editReply({ embeds: [verificationRequiredEmbed] });
-        return;
-      }
-
-      if (userData.expires && Date.now() > userData.expires) {
-        verifiedUsers.delete(interaction.user.id);
-
-        const expiredEmbed = new EmbedBuilder()
-          .setColor("#E74C3C")
-          .setTitle("⏰ Access Expired")
-          .setDescription("**Your verification code has expired**")
-          .addFields({
-            name: "🔄 Renew Access",
-            value: "Please redeem a new verification code to continue using the prediction service.",
-            inline: false,
-          })
-          .setTimestamp();
-
-        await interaction.editReply({ embeds: [expiredEmbed] });
-        return;
-      }
-
-      const serverSeedHash = interaction.options.getString("server_seed_hash");
-      const safeMines = interaction.options.getInteger("safe_mines");
-      const nonce = interaction.options.getInteger("nonce");
-
-      const validation = validateInputs(serverSeedHash, safeMines, nonce);
-      if (!validation.isValid) {
-        const errorEmbed = new EmbedBuilder()
-          .setColor("#E74C3C")
-          .setTitle("❌ Invalid Analysis Parameters")
-          .setDescription("**Input validation failed - please check your parameters**")
-          .addFields({
-            name: "❗ Validation Errors",
-            value: validation.errors.join("\n"),
-            inline: false,
-          })
-          .addFields({
-            name: "✅ Required Format",
-            value:
-              "**Server Seed Hash:** 64 character hex string (0-9, a-f)\n**Safe Mines:** Integer between 1-24\n**Nonce:** Positive integer (1-999999999)",
-            inline: false,
-          })
-          .addFields({
-            name: "📝 Example",
-            value: "Server Hash: `a1b2c3d4e5f6...` (64 chars)\nSafe Mines: `5`\nNonce: `12345`",
-            inline: false,
-          })
-          .setTimestamp();
-
-        await interaction.editReply({ embeds: [errorEmbed] });
-        return;
-      }
-
-      const predictor = new MinePredictor(5, 5, safeMines, serverSeedHash, nonce);
-      const verification = predictor.getVerificationData();
-      const analysis = predictor.getAnalysis();
-
-      const embed = new EmbedBuilder()
-        .setColor("#2C3E50")
-        .setTitle("🔮 Advanced Mine Pattern Predictions")
-        .setDescription(`**${analysis.method.charAt(0).toUpperCase() + analysis.method.slice(1)} Analysis for Rollbet**`);
-
-      embed.addFields(
-        {
-          name: "🎯 Prediction Method",
-          value: `Algorithm: ${analysis.patternType}\nMethod: ${analysis.method.charAt(0).toUpperCase() + analysis.method.slice(1)}\nWebsite: Rollbet`,
-          inline: true,
-        },
-        {
-          name: "📊 Analysis Data",
-          value: `Grid: 5×5\nSafe Mines: ${safeMines}\nDangerous Mines: ${predictor.mines}\nRisk Level: ${analysis.riskLevel}`,
-          inline: true,
-        },
-        {
-          name: "🔑 Seed Information",
-          value: `Server Hash: \`${serverSeedHash.substring(0, 8)}...\`\nNonce: ${nonce}\nEntropy: ${analysis.entropyScore}%`,
-          inline: true,
-        },
-      );
-
-      const gridDisplay = predictor.getGridDisplay();
-      embed.addFields({
-        name: "🎯 Predicted Mine Locations",
-        value: `\`\`\`\n${gridDisplay}\`\`\``,
-        inline: false,
-      });
-
-      embed.addFields({
-        name: "🔍 Verification Signature",
-        value: `\`${verification.hash}\``,
-        inline: false,
-      });
-
-      embed.setFooter({
-        text: `Professional Mine Prediction Service • ${analysis.method.charAt(0).toUpperCase() + analysis.method.slice(1)} Algorithm v5.0`,
-      });
-
-      await interaction.editReply({ embeds: [embed] });
-    } catch (error) {
-      console.error("Predict command error:", error);
-
-      const errorEmbed = new EmbedBuilder()
-        .setColor("#E74C3C")
-        .setTitle("❌ Prediction Error")
-        .setDescription("**An error occurred while processing your prediction**")
-        .addFields({
-          name: "🔧 Troubleshooting",
-          value: "Please check your input parameters and try again. If the issue persists, contact an administrator.",
-          inline: false,
-        })
-        .setTimestamp();
-
-      try {
-        await interaction.editReply({ embeds: [errorEmbed] });
-      } catch (replyError) {
-        console.error("Failed to send error response:", replyError);
-      }
+      await interaction.editReply({ embeds: [errorEmbed] });
+    } catch (replyError) {
+      console.error("Failed to send error response:", replyError);
     }
   }
+}
 });
 
 client.on("error", (error) => {
