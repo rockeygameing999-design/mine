@@ -1,6 +1,28 @@
 import { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder } from "discord.js"
 import http from "http"
 import crypto from "crypto"
+import fetch from "node-fetch"
+
+// Self-ping to keep Render free tier active
+const RENDER_URL = "https://mine-ka1i.onrender.com"; // Your Render public URL
+const PING_INTERVAL = 4 * 60 * 1000; // 4 minutes
+
+function startSelfPing() {
+  setInterval(async () => {
+    try {
+      const response = await fetch(RENDER_URL);
+      if (response.ok) {
+        console.log(`Self-ping successful at ${new Date().toISOString()}`);
+      } else {
+        console.error(`Self-ping failed: ${response.status}`);
+      }
+    } catch (error) {
+      console.error(`Self-ping error: ${error.message}`);
+    }
+  }, PING_INTERVAL);
+}
+
+startSelfPing();
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
@@ -301,7 +323,7 @@ class MinePredictor {
     for (let y = 0; y < this.height && modified < modifications; y++) {
       for (let x = 0; x < this.width && modified < modifications; x++) {
         const pos = y * this.width + x
-        const hashValue = Number.parseInt(hash.substr((pos * 2) % (hash.length - 2), 2), 16)
+        const hashValue = Number.parseInt(hash.substr((pos * 2) % (hat.hash.length - 2), 2), 16)
 
         if (this.grid[y][x] && hashValue % 7 === 0) {
           const newX = (x + (hashValue % 3) - 1 + this.width) % this.width
@@ -861,7 +883,7 @@ client.on("interactionCreate", async (interaction) => {
 
       const embed = new EmbedBuilder()
         .setColor("#2C3E50")
-        .setTitle("🔮 Advanced Mine Pattern Prediction")
+        .setTitle("🔮 Advanced Mine Pattern Predictions")
         .setDescription(
           `**${analysis.method.charAt(0).toUpperCase() + analysis.method.slice(1)} Analysis for ${website.charAt(0).toUpperCase() + website.slice(1)}**`,
         )
