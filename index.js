@@ -233,11 +233,6 @@ const submissions = new Map();
 const usedServerSeeds = new Map();
 const bannedUsers = new Map();
 const ADMIN_USER_IDS = ["862245514313203712", "1321546526790651967"];
-const verificationCodes = new Map([
-  ["MINES2024", { expires: null, usedBy: null }],
-  ["PREDICT123", { expires: null, usedBy: null }],
-  ["VERIFIED", { expires: null, usedBy: null }],
-]);
 
 function validateResultInputs(serverSeedHash, clientSeed, nonce, numMines, minePositions) {
   const errors = [];
@@ -303,14 +298,8 @@ function checkSpamAndRepetition(userId, minePositions) {
   return { isValid: true };
 }
 
-function cleanExpiredCodesAndUsers() {
+function cleanExpiredUsers() {
   const now = Date.now();
-  for (const [code, data] of verificationCodes.entries()) {
-    if (data.expires && now > data.expires && !data.usedBy) {
-      console.log(`[${new Date().toISOString()}] Removing expired code: ${code}`);
-      verificationCodes.delete(code);
-    }
-  }
   for (const [userId, data] of verifiedUsers.entries()) {
     if (data.expires && now > data.expires) {
       console.log(`[${new Date().toISOString()}] Removing expired user access: ${userId}`);
@@ -324,10 +313,16 @@ client.once("ready", () => {
 
   const commands = [
     new SlashCommandBuilder()
-      .setName("redeem")
-      .setDescription("Redeem a verification code to access mine prediction service")
+      .setName("verify")
+      .setDescription("Admin command to grant a user access to mine prediction service")
       .addStringOption((option) =>
-        option.setName("code").setDescription("Enter your verification code").setRequired(true),
+        option.setName("user_id").setDescription("User ID to grant access to").setRequired(true),
+      )
+      .addIntegerOption((option) =>
+        option
+          .setName("duration")
+          .setDescription("Access duration in hours (leave empty for permanent)")
+          .setRequired(false),
       ),
     new SlashCommandBuilder()
       .setName("predict")
@@ -375,27 +370,6 @@ client.once("ready", () => {
     new SlashCommandBuilder()
       .setName("admin")
       .setDescription("Admin panel for managing verification system")
-      .addSubcommand((subcommand) =>
-        subcommand
-          .setName("generate")
-          .setDescription("Generate new verification codes")
-          .addIntegerOption((option) =>
-            option.setName("count").setDescription("Number of codes to generate (1-10)").setRequired(false),
-          )
-          .addIntegerOption((option) =>
-            option
-              .setName("duration")
-              .setDescription("Code validity duration in hours (leave empty for permanent)")
-              .setRequired(false),
-          ),
-      )
-      .addSubcommand((subcommand) => subcommand.setName("list").setDescription("List all active verification codes"))
-      .addSubcommand((subcommand) =>
-        subcommand
-          .setName("remove")
-          .setDescription("Remove a verification code")
-          .addStringOption((option) => option.setName("code").setDescription("Code to remove").setRequired(true)),
-      )
       .addSubcommand((subcommand) => subcommand.setName("stats").setDescription("View verification statistics"))
       .addSubcommand((subcommand) =>
         subcommand
@@ -417,6 +391,91 @@ client.on("interactionCreate", async (interaction) => {
 
   const { commandName } = interaction;
 
+  if (commandName === "verify") {
+    if (!ADMIN_USER_IDS.includes(interaction.user.id)) {
+      const unauthorizedEmbed = new EmbedBuilder()
+        .setColor("#E74C3C")
+        .setTitle("🚫 Access Denied")
+        .setDescription("**You are not authorized to use this command**")
+        .setTimestamp();
+
+      await interaction.reply({ embeds: [unauthorizedEmbed], ephemeral: true });
+      return;
+    }
+
+    const userId = interaction.options.getString("user_id");
+    const duration = interaction.options.getInteger("duration");
+    const expires = duration ? Date.now() + duration * 60 * 60 * 1000 : null;
+
+    if (!/^\d{17,19}$/.test(userId)) {
+      const invalidEmbed = new EmbedBuilder()
+        .setColor("#E74C3C")
+        .setTitle("❌ Invalid User ID")
+        .setDescription("**The provided user ID is invalid**")
+        .addFields({
+          name: "🔧 Troubleshooting",
+          value: "Ensure the user ID is a valid Discord user ID (17-19 digits).",
+          inline: false,
+        })
+        .setTimestamp();
+
+      await interaction.reply({ embeds: [invalidEmbed], ephemeral: true });
+      return;
+    }
+
+    verifiedUsers.set(userId, { expires });
+    console.log(`[${new Date().toISOString()}] Granted access to user ${userId}, expires: ${expires ? new Date(expires).toISOString() : "permanent"}`);
+
+    const successEmbed = new EmbedBuilder()
+      .setColor("#27AE60")
+      .setTitle("✅ User Verified")
+      .setDescription(`**Access granted to <@${userId}>**`)
+      .addFields({
+        name: "🎯 Access Granted",
+        value: "The user can now use the `/predict` command to analyze mine patterns.",
+        inline: false,
+      })
+      .addFields({
+        name: "⏰ Access Duration",
+        value: expires ? `Expires <t:${Math.floor(expires / 1000)}:R>` : "Permanent access",
+        inline: false,
+      })
+      .setTimestamp()
+      .setFooter({ text: "Admin Panel • User Verification" });
+
+    await interaction.reply({ embeds: [successEmbed], ephemeral: true });
+
+    // Notify the user
+    try {
+      const user = await client.users.fetch(userId);
+      const userEmbed = new EmbedBuilder()
+        .setColor("#27AE60")
+        .setTitle("✅ Verification Successful")
+        .setDescription("**You have been granted access to the mine prediction service!**")
+        .addFields({
+          name: "🎯 Access Granted",
+          value: "You can now use the `/predict` command to analyze mine patterns.",
+          inline: false,
+        })
+        .addFields({
+          name: "⏰ Access Duration",
+          value: expires ? `Expires <t:${Math.floor(expires / 1000)}:R>` : "Permanent access",
+          inline: false,
+        })
+        .setTimestamp()
+        .setFooter({ text: "Professional Mine Prediction Service" });
+
+      await user.send({ embeds: [userEmbed] });
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] Failed to notify user ${userId}:`, error);
+      await interaction.followUp({
+        content: `Access granted, but could not notify <@${userId}> (DMs may be closed or user not found).`,
+        ephemeral: true,
+      });
+    }
+    return;
+  }
+
   if (commandName === "admin") {
     if (!ADMIN_USER_IDS.includes(interaction.user.id)) {
       const unauthorizedEmbed = new EmbedBuilder()
@@ -431,121 +490,25 @@ client.on("interactionCreate", async (interaction) => {
 
     const subcommand = interaction.options.getSubcommand();
 
-    if (subcommand === "generate") {
-      const count = interaction.options.getInteger("count") || 1;
-      const duration = interaction.options.getInteger("duration");
-      const maxCount = Math.min(count, 10);
-      const newCodes = [];
-
-      for (let i = 0; i < maxCount; i++) {
-        const code = crypto.randomBytes(4).toString("hex").toUpperCase();
-        const expires = duration ? Date.now() + duration * 60 * 60 * 1000 : null;
-        verificationCodes.set(code, { expires, usedBy: null });
-        newCodes.push({ code, expires });
-        console.log(`[${new Date().toISOString()}] Generated code: ${code}, expires: ${expires ? new Date(expires).toISOString() : "permanent"}`);
-      }
-
-      const generateEmbed = new EmbedBuilder()
-        .setColor("#27AE60")
-        .setTitle("✅ Verification Codes Generated")
-        .setDescription("**New verification codes have been created**")
-        .addFields({
-          name: "🔑 Generated Codes",
-          value: newCodes
-            .map(({ code, expires }) => {
-              const expiryText = expires ? `(expires <t:${Math.floor(expires / 1000)}:R>)` : "(permanent)";
-              return `\`${code}\` ${expiryText}`;
-            })
-            .join("\n"),
-          inline: false,
-        })
-        .addFields({
-          name: "📊 Total Active Codes",
-          value: `${verificationCodes.size} codes`,
-          inline: true,
-        })
-        .setTimestamp()
-        .setFooter({ text: "Admin Panel • Code Generation" });
-
-      await interaction.reply({ embeds: [generateEmbed], ephemeral: true });
-    } else if (subcommand === "list") {
-      cleanExpiredCodesAndUsers();
-      const codesList =
-        Array.from(verificationCodes.entries())
-          .map(([code, data]) => {
+    if (subcommand === "stats") {
+      cleanExpiredUsers();
+      const verifiedUsersList =
+        Array.from(verifiedUsers.entries())
+          .map(([userId, data]) => {
             const expiryText = data.expires ? `(expires <t:${Math.floor(data.expires / 1000)}:R>)` : "(permanent)";
-            const usedText = data.usedBy ? `used by <@${data.usedBy}>` : "not used";
-            return `\`${code}\` ${expiryText}, ${usedText}`;
+            return `<@${userId}> ${expiryText}`;
           })
-          .join("\n") || "No codes available";
+          .join("\n") || "No verified users";
 
-      const listEmbed = new EmbedBuilder()
-        .setColor("#3498DB")
-        .setTitle("📋 Active Verification Codes")
-        .setDescription("**All currently active verification codes**")
-        .addFields({
-          name: "🔑 Available Codes",
-          value: codesList,
-          inline: false,
-        })
-        .addFields({
-          name: "📊 Statistics",
-          value: `Total Codes: ${verificationCodes.size}\nVerified Users: ${verifiedUsers.size}`,
-          inline: false,
-        })
-        .setTimestamp()
-        .setFooter({ text: "Admin Panel • Code Management" });
-
-      await interaction.reply({ embeds: [listEmbed], ephemeral: true });
-    } else if (subcommand === "remove") {
-      const codeToRemove = interaction.options.getString("code").toUpperCase();
-
-      if (verificationCodes.has(codeToRemove)) {
-        verificationCodes.delete(codeToRemove);
-        console.log(`[${new Date().toISOString()}] Removed code: ${codeToRemove}`);
-
-        const removeEmbed = new EmbedBuilder()
-          .setColor("#E67E22")
-          .setTitle("🗑️ Code Removed")
-          .setDescription("**Verification code has been deactivated**")
-          .addFields({
-            name: "🔑 Removed Code",
-            value: `\`${codeToRemove}\``,
-            inline: false,
-          })
-          .addFields({
-            name: "📊 Remaining Codes",
-            value: `${verificationCodes.size} active codes`,
-            inline: true,
-          })
-          .setTimestamp();
-
-        await interaction.reply({ embeds: [removeEmbed], ephemeral: true });
-      } else {
-        const notFoundEmbed = new EmbedBuilder()
-          .setColor("#E74C3C")
-          .setTitle("❌ Code Not Found")
-          .setDescription("**The specified verification code does not exist**")
-          .setTimestamp();
-
-        await interaction.reply({ embeds: [notFoundEmbed], ephemeral: true });
-      }
-    } else if (subcommand === "stats") {
-      cleanExpiredCodesAndUsers();
       const statsEmbed = new EmbedBuilder()
         .setColor("#9B59B6")
         .setTitle("📊 Verification System Statistics")
         .setDescription("**Current system status and metrics**")
         .addFields(
           {
-            name: "🔑 Active Codes",
-            value: `${verificationCodes.size} codes`,
-            inline: true,
-          },
-          {
             name: "✅ Verified Users",
-            value: `${verifiedUsers.size} users`,
-            inline: true,
+            value: `${verifiedUsers.size} users\n${verifiedUsersList}`,
+            inline: false,
           },
           {
             name: "📤 Total Submissions",
@@ -586,101 +549,23 @@ client.on("interactionCreate", async (interaction) => {
     return;
   }
 
-  if (commandName === "redeem") {
-    const code = interaction.options.getString("code").toUpperCase();
-    console.log(`[${new Date().toISOString()}] Redeem attempt by ${interaction.user.id} with code: ${code}`);
-
-    cleanExpiredCodesAndUsers();
-
-    if (verificationCodes.has(code)) {
-      const codeData = verificationCodes.get(code);
-      if (codeData.usedBy) {
-        console.log(`[${new Date().toISOString()}] Code ${code} already used by ${codeData.usedBy}`);
-        const usedEmbed = new EmbedBuilder()
-          .setColor("#E74C3C")
-          .setTitle("❌ Code Already Used")
-          .setDescription("**This verification code has already been redeemed by another user**")
-          .addFields({
-            name: "🔑 Access Denied",
-            value: "This code is single-use and has been claimed. Contact an administrator for a new verification code.",
-            inline: false,
-          })
-          .addFields({
-            name: "📝 Example",
-            value: "Use `/redeem MINES2024` or a new code provided by an admin (e.g., `A1B2C3D4`).",
-            inline: false,
-          })
-          .setTimestamp()
-          .setFooter({ text: "Professional Mine Prediction Service" });
-
-        await interaction.reply({ embeds: [usedEmbed], ephemeral: true });
-        return;
-      }
-
-      verifiedUsers.set(interaction.user.id, { expires: codeData.expires });
-      verificationCodes.set(code, { ...codeData, usedBy: interaction.user.id });
-      verificationCodes.delete(code); // Remove code to prevent reuse
-      console.log(`[${new Date().toISOString()}] Code ${code} redeemed successfully by ${interaction.user.id}`);
-
-      const successEmbed = new EmbedBuilder()
-        .setColor("#27AE60")
-        .setTitle("✅ Code Redeemed Successfully")
-        .setDescription("**You have successfully redeemed your verification code!**")
-        .addFields({
-          name: "🎯 Access Granted",
-          value: "You can now use the `/predict` command to analyze mine patterns.",
-          inline: false,
-        })
-        .addFields({
-          name: "⏰ Access Duration",
-          value: codeData.expires ? `Expires <t:${Math.floor(codeData.expires / 1000)}:R>` : "Permanent access",
-          inline: false,
-        })
-        .setTimestamp()
-        .setFooter({ text: "Professional Mine Prediction Service" });
-
-      await interaction.reply({ embeds: [successEmbed], ephemeral: true });
-    } else {
-      console.log(`[${new Date().toISOString()}] Invalid code attempted: ${code}`);
-      const errorEmbed = new EmbedBuilder()
-        .setColor("#E74C3C")
-        .setTitle("❌ Invalid or Expired Verification Code")
-        .setDescription("**The code you entered is invalid or has expired**")
-        .addFields({
-          name: "🔑 Access Denied",
-          value: "Please check the code and try again, or contact an administrator to obtain a valid verification code.",
-          inline: false,
-        })
-        .addFields({
-          name: "📝 Example",
-          value: "Use `/redeem MINES2024` or a code provided by an admin (e.g., `A1B2C3D4`).",
-          inline: false,
-        })
-        .setTimestamp()
-        .setFooter({ text: "Professional Mine Prediction Service" });
-
-      await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
-    }
-    return;
-  }
-
   if (commandName === "predict") {
     try {
-      cleanExpiredCodesAndUsers();
+      cleanExpiredUsers();
       const userData = verifiedUsers.get(interaction.user.id);
       if (!userData) {
         const verificationRequiredEmbed = new EmbedBuilder()
           .setColor("#F39C12")
           .setTitle("🔒 Verification Required")
-          .setDescription("**You must redeem a verification code to use the mine prediction service**")
+          .setDescription("**You must be verified by an admin to use the mine prediction service**")
           .addFields({
             name: "🎯 Get Access",
-            value: "Use `/redeem <code>` command with a valid verification code to access predictions.",
+            value: "Contact an admin to be verified using the `/verify` command with your user ID.",
             inline: false,
           })
           .addFields({
             name: "📞 Contact Admin",
-            value: "Contact the server administrator to obtain a verification code.",
+            value: "Reach out in the support channel or DM an admin with your user ID.",
             inline: false,
           })
           .setTimestamp()
