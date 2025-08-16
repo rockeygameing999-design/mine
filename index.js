@@ -240,7 +240,7 @@ async function saveVerifiedUsers() {
     await fs.writeFile("verifiedUsers.json", JSON.stringify([...verifiedUsers], null, 2), { encoding: "utf8", flag: "w" });
     console.log(`[${new Date().toISOString()}] Saved verifiedUsers to file: ${[...verifiedUsers.keys()]}`);
   } catch (error) {
-    console.error(`[${new Date().toISOString()}] Failed to save verifiedUsers:`, error);
+    console.error(`[${new Date().toISOString()}] Failed to save verifiedUsers:`, error.message, error.stack);
   }
 }
 
@@ -251,7 +251,10 @@ async function loadVerifiedUsers() {
     loaded.forEach(([userId, data]) => verifiedUsers.set(userId, data));
     console.log(`[${new Date().toISOString()}] Loaded ${verifiedUsers.size} verifiedUsers: ${[...verifiedUsers.keys()]}`);
   } catch (error) {
-    console.log(`[${new Date().toISOString()}] No verifiedUsers file found, starting fresh`);
+    console.log(`[${new Date().toISOString()}] No verifiedUsers file found, initializing with admins`);
+    // Initialize with admin IDs
+    ADMIN_USER_IDS.forEach((userId) => verifiedUsers.set(userId, { expires: null }));
+    await saveVerifiedUsers();
   }
 }
 
@@ -352,6 +355,12 @@ client.once("ready", async () => {
           .setRequired(false),
       ),
     new SlashCommandBuilder()
+      .setName("emergency-verify")
+      .setDescription("Emergency admin command to force verify a user and ensure file save")
+      .addStringOption((option) =>
+        option.setName("user_id").setDescription("User ID to grant access to").setRequired(true),
+      ),
+    new SlashCommandBuilder()
       .setName("predict")
       .setDescription("Predict mine locations using your provably fair seeds")
       .addStringOption((option) =>
@@ -424,9 +433,9 @@ client.on("interactionCreate", async (interaction) => {
 
   const { commandName } = interaction;
 
-  if (commandName === "verify") {
+  if (commandName === "verify" || commandName === "emergency-verify") {
     if (!ADMIN_USER_IDS.includes(interaction.user.id)) {
-      console.log(`[${new Date().toISOString()}] Unauthorized /verify attempt by ${interaction.user.id}`);
+      console.log(`[${new Date().toISOString()}] Unauthorized ${commandName} attempt by ${interaction.user.id}`);
       const unauthorizedEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
         .setTitle("🚫 Access Denied")
@@ -438,11 +447,11 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     const userId = interaction.options.getString("user_id");
-    const duration = interaction.options.getInteger("duration");
+    const duration = commandName === "verify" ? interaction.options.getInteger("duration") : null;
     const expires = duration ? Date.now() + duration * 60 * 60 * 1000 : null;
 
     if (!/^\d{17,19}$/.test(userId)) {
-      console.log(`[${new Date().toISOString()}] Invalid user ID in /verify: ${userId}`);
+      console.log(`[${new Date().toISOString()}] Invalid user ID in ${commandName}: ${userId}`);
       const invalidEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
         .setTitle("❌ Invalid User ID")
@@ -460,7 +469,7 @@ client.on("interactionCreate", async (interaction) => {
 
     verifiedUsers.set(userId, { expires });
     await saveVerifiedUsers();
-    console.log(`[${new Date().toISOString()}] Granted access to user ${userId}, expires: ${expires ? new Date(expires).toISOString() : "permanent"}, verifiedUsers: ${[...verifiedUsers.keys()]}`);
+    console.log(`[${new Date().toISOString()}] ${commandName} granted access to user ${userId}, expires: ${expires ? new Date(expires).toISOString() : "permanent"}, verifiedUsers: ${[...verifiedUsers.keys()]}`);
 
     const successEmbed = new EmbedBuilder()
       .setColor("#27AE60")
@@ -504,7 +513,7 @@ client.on("interactionCreate", async (interaction) => {
       await user.send({ embeds: [userEmbed] });
       console.log(`[${new Date().toISOString()}] Notified user ${userId} of verification`);
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] Failed to notify user ${userId}:`, error);
+      console.error(`[${new Date().toISOString()}] Failed to notify user ${userId}:`, error.message, error.stack);
       await interaction.followUp({
         content: `Access granted, but could not notify <@${userId}> (DMs may be closed or user not found).`,
         ephemeral: true,
@@ -711,7 +720,7 @@ client.on("interactionCreate", async (interaction) => {
 
       await interaction.editReply({ embeds: [embed] });
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] Predict command error for ${interaction.user.id}:`, error);
+      console.error(`[${new Date().toISOString()}] Predict command error for ${interaction.user.id}:`, error.message, error.stack);
 
       const errorEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
@@ -727,7 +736,7 @@ client.on("interactionCreate", async (interaction) => {
       try {
         await interaction.editReply({ embeds: [errorEmbed] });
       } catch (replyError) {
-        console.error(`[${new Date().toISOString()}] Failed to send error response:`, replyError);
+        console.error(`[${new Date().toISOString()}] Failed to send error response:`, replyError.message, replyError.stack);
       }
     }
     return;
@@ -904,7 +913,7 @@ client.on("interactionCreate", async (interaction) => {
 
       await interaction.editReply({ embeds: [resultEmbed] });
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] Submitresult command error:`, error);
+      console.error(`[${new Date().toISOString()}] Submitresult command error:`, error.message, error.stack);
 
       const errorEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
@@ -925,7 +934,7 @@ client.on("interactionCreate", async (interaction) => {
       try {
         await interaction.editReply({ embeds: [errorEmbed] });
       } catch (replyError) {
-        console.error(`[${new Date().toISOString()}] Failed to send error response:`, replyError);
+        console.error(`[${new Date().toISOString()}] Failed to send error response:`, replyError.message, replyError.stack);
       }
     }
     return;
