@@ -2,21 +2,22 @@ import { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder } from "di
 import http from "http";
 import crypto from "crypto";
 import fetch from "node-fetch";
-import fs from "fs/promises";
+import { MongoClient } from "mongodb";
+
+// MongoDB setup
+const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017";
+const mongoClient = new MongoClient(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true });
+let db;
 
 // Self-ping to keep Render free tier active
 const RENDER_URL = "https://mine-ka1i.onrender.com";
-const PING_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const PING_INTERVAL = 4 * 60 * 1000; // 4 minutes
 
-function startSelfPing() {
+async function startSelfPing() {
   setInterval(async () => {
     try {
       const response = await fetch(RENDER_URL, { method: "GET", timeout: 5000 });
-      if (response.ok) {
-        console.log(`[${new Date().toISOString()}] Self-ping successful`);
-      } else {
-        console.error(`[${new Date().toISOString()}] Self-ping failed: ${response.status}`);
-      }
+      console.log(`[${new Date().toISOString()}] Self-ping ${response.ok ? "successful" : `failed: ${response.status}`}`);
     } catch (error) {
       console.error(`[${new Date().toISOString()}] Self-ping error: ${error.message}`);
     }
@@ -79,7 +80,7 @@ class MinePredictor {
   }
 
   generateHeatMap() {
-    const heatMap = new Array(25).fill(0.04); // Default probability: 1/25
+    const heatMap = new Array(25).fill(0.04);
     const centerPositions = [6, 7, 8, 11, 12, 13, 16, 17, 18];
     centerPositions.forEach((pos) => (heatMap[pos] += 0.02));
     const total = heatMap.reduce((sum, val) => sum + val, 0);
@@ -237,22 +238,27 @@ const ADMIN_USER_IDS = ["862245514313203712", "1321546526790651967"];
 
 async function saveVerifiedUsers() {
   try {
-    await fs.writeFile("verifiedUsers.json", JSON.stringify([...verifiedUsers], null, 2), { encoding: "utf8", flag: "w" });
-    console.log(`[${new Date().toISOString()}] Saved verifiedUsers to file: ${[...verifiedUsers.keys()]}`);
+    const collection = db.collection("verifiedUsers");
+    const users = Array.from(verifiedUsers.entries()).map(([userId, data]) => ({ userId, ...data }));
+    await collection.deleteMany({});
+    if (users.length > 0) {
+      await collection.insertMany(users);
+    }
+    console.log(`[${new Date().toISOString()}] Saved ${users.length} verifiedUsers to MongoDB`);
   } catch (error) {
-    console.error(`[${new Date().toISOString()}] Failed to save verifiedUsers:`, error.message, error.stack);
+    console.error(`[${new Date().toISOString()}] Failed to save verifiedUsers: ${error.message}`);
   }
 }
 
 async function loadVerifiedUsers() {
   try {
-    const data = await fs.readFile("verifiedUsers.json", "utf8");
-    const loaded = JSON.parse(data);
-    loaded.forEach(([userId, data]) => verifiedUsers.set(userId, data));
-    console.log(`[${new Date().toISOString()}] Loaded ${verifiedUsers.size} verifiedUsers: ${[...verifiedUsers.keys()]}`);
+    const collection = db.collection("verifiedUsers");
+    const users = await collection.find({}).toArray();
+    verifiedUsers.clear();
+    users.forEach(({ userId, expires }) => verifiedUsers.set(userId, { expires }));
+    console.log(`[${new Date().toISOString()}] Loaded ${verifiedUsers.size} verifiedUsers from MongoDB`);
   } catch (error) {
-    console.log(`[${new Date().toISOString()}] No verifiedUsers file found, initializing with admins`);
-    // Initialize with admin IDs
+    console.error(`[${new Date().toISOString()}] Failed to load verifiedUsers: ${error.message}`);
     ADMIN_USER_IDS.forEach((userId) => verifiedUsers.set(userId, { expires: null }));
     await saveVerifiedUsers();
   }
@@ -260,7 +266,6 @@ async function loadVerifiedUsers() {
 
 function validateResultInputs(serverSeedHash, clientSeed, nonce, numMines, minePositions) {
   const errors = [];
-
   if (!/^[0-9a-fA-F]{64}$/.test(serverSeedHash)) {
     errors.push("Server seed hash must be a 64-character hex string (0-9, a-f).");
   }
@@ -287,7 +292,6 @@ function validateResultInputs(serverSeedHash, clientSeed, nonce, numMines, mineP
       errors.push("Mine positions must be unique.");
     }
   }
-
   return {
     isValid: errors.length === 0,
     errors,
@@ -298,18 +302,14 @@ function validateResultInputs(serverSeedHash, clientSeed, nonce, numMines, mineP
 function checkSpamAndRepetition(userId, minePositions) {
   const userSubmissions = submissions.get(userId) || { count: 0, lastSubmission: 0, timestamps: [], positions: [] };
   const now = Date.now();
-
-  userSubmissions.timestamps = userSubmissions.timestamps.filter((ts) => now - ts < 20000); // 20 seconds
+  userSubmissions.timestamps = userSubmissions.timestamps.filter((ts) => now - ts < 20000);
   userSubmissions.timestamps.push(now);
-
   const sortedPositions = minePositions.sort((a, b) => a - b).join(",");
   userSubmissions.positions.push(sortedPositions);
   userSubmissions.positions = userSubmissions.positions.slice(-4);
-
   if (userSubmissions.timestamps.length >= 5) {
     return { isValid: false, reason: "Submitting too many results in a short time (5+ in 20 seconds)." };
   }
-
   const positionCounts = {};
   userSubmissions.positions.forEach((pos) => {
     positionCounts[pos] = (positionCounts[pos] || 0) + 1;
@@ -317,7 +317,6 @@ function checkSpamAndRepetition(userId, minePositions) {
       return { isValid: false, reason: "Submitting the same mine positions more than three times." };
     }
   });
-
   submissions.set(userId, userSubmissions);
   return { isValid: true };
 }
@@ -338,271 +337,387 @@ function cleanExpiredUsers() {
 }
 
 client.once("ready", async () => {
-  console.log(`[${new Date().toISOString()}] 🤖 ${client.user.tag} is online and ready to predict mines!`);
-  await loadVerifiedUsers();
+  try {
+    await mongoClient.connect();
+    db = mongoClient.db("mines");
+    console.log(`[${new Date().toISOString()}] Connected to MongoDB`);
+    await loadVerifiedUsers();
+    console.log(`[${new Date().toISOString()}] 🤖 ${client.user.tag} is online and ready to predict mines!`);
 
-  const commands = [
-    new SlashCommandBuilder()
-      .setName("verify")
-      .setDescription("Admin command to grant a user access to mine prediction service")
-      .addStringOption((option) =>
-        option.setName("user_id").setDescription("User ID to grant access to").setRequired(true),
-      )
-      .addIntegerOption((option) =>
-        option
-          .setName("duration")
-          .setDescription("Access duration in hours (leave empty for permanent)")
-          .setRequired(false),
-      ),
-    new SlashCommandBuilder()
-      .setName("emergency-verify")
-      .setDescription("Emergency admin command to force verify a user and ensure file save")
-      .addStringOption((option) =>
-        option.setName("user_id").setDescription("User ID to grant access to").setRequired(true),
-      ),
-    new SlashCommandBuilder()
-      .setName("predict")
-      .setDescription("Predict mine locations using your provably fair seeds")
-      .addStringOption((option) =>
-        option
-          .setName("server_seed_hash")
-          .setDescription("Server seed hash (64 character hex string)")
-          .setRequired(true),
-      )
-      .addIntegerOption((option) =>
-        option.setName("safe_mines").setDescription("Number of safe mines (1-24)").setRequired(true),
-      )
-      .addIntegerOption((option) => option.setName("nonce").setDescription("Nonce value (integer)").setRequired(true)),
-    new SlashCommandBuilder()
-      .setName("submitresult")
-      .setDescription("Submit game result to improve prediction accuracy")
-      .addStringOption((option) =>
-        option.setName("server_seed_hash").setDescription("Hashed server seed (64 character hex string)").setRequired(true),
-      )
-      .addStringOption((option) =>
-        option.setName("client_seed").setDescription("Active client seed (e.g., VqsjloxT6b)").setRequired(true),
-      )
-      .addIntegerOption((option) =>
-        option.setName("nonce").setDescription("Amount of bets with per seed (e.g., 3002)").setRequired(true),
-      )
-      .addIntegerOption((option) =>
-        option.setName("num_mines").setDescription("Number of mines in the game (1-24)").setRequired(true),
-      )
-      .addStringOption((option) =>
-        option.setName("mine_positions").setDescription("Comma-separated mine positions (e.g., 3,7,12,18,22)").setRequired(true),
-      ),
-    new SlashCommandBuilder()
-      .setName("howtosubmitresult")
-      .setDescription("Learn how to submit game results and why it matters")
-      .setDefaultMemberPermissions(0),
-    new SlashCommandBuilder()
-      .setName("myresults")
-      .setDescription("View how many game results you have submitted")
-      .setDefaultMemberPermissions(0),
-    new SlashCommandBuilder()
-      .setName("leaderboard")
-      .setDescription("View the leaderboard of top result submitters")
-      .setDefaultMemberPermissions(0),
-    new SlashCommandBuilder()
-      .setName("admin")
-      .setDescription("Admin panel for managing verification system")
-      .addSubcommand((subcommand) => subcommand.setName("stats").setDescription("View verification statistics"))
-      .addSubcommand((subcommand) =>
-        subcommand
-          .setName("unban")
-          .setDescription("Unban a user from submitting results")
-          .addStringOption((option) => option.setName("user_id").setDescription("User ID to unban").setRequired(true)),
-      )
-      .addSubcommand((subcommand) =>
-        subcommand
-          .setName("revoke")
-          .setDescription("Revoke a user's access to the prediction service")
-          .addStringOption((option) => option.setName("user_id").setDescription("User ID to revoke access").setRequired(true)),
-      ),
-  ];
+    const commands = [
+      new SlashCommandBuilder()
+        .setName("verify")
+        .setDescription("Admin command to grant a user access to mine prediction service")
+        .addStringOption((option) =>
+          option.setName("user_id").setDescription("User ID to grant access to").setRequired(true),
+        )
+        .addIntegerOption((option) =>
+          option
+            .setName("duration")
+            .setDescription("Access duration in hours (leave empty for permanent)")
+            .setRequired(false),
+        ),
+      new SlashCommandBuilder()
+        .setName("bulk-verify")
+        .setDescription("Admin command to verify multiple users")
+        .addStringOption((option) =>
+          option
+            .setName("user_ids")
+            .setDescription("Comma-separated user IDs to grant access to")
+            .setRequired(true),
+        )
+        .addIntegerOption((option) =>
+          option
+            .setName("duration")
+            .setDescription("Access duration in hours (leave empty for permanent)")
+            .setRequired(false),
+        ),
+      new SlashCommandBuilder()
+        .setName("emergency-verify")
+        .setDescription("Emergency admin command to force verify a user")
+        .addStringOption((option) =>
+          option.setName("user_id").setDescription("User ID to grant access to").setRequired(true),
+        ),
+      new SlashCommandBuilder()
+        .setName("predict")
+        .setDescription("Predict mine locations using your provably fair seeds")
+        .addStringOption((option) =>
+          option
+            .setName("server_seed_hash")
+            .setDescription("Server seed hash (64 character hex string)")
+            .setRequired(true),
+        )
+        .addIntegerOption((option) =>
+          option.setName("safe_mines").setDescription("Number of safe mines (1-24)").setRequired(true),
+        )
+        .addIntegerOption((option) => option.setName("nonce").setDescription("Nonce value (integer)").setRequired(true)),
+      new SlashCommandBuilder()
+        .setName("submitresult")
+        .setDescription("Submit game result to improve prediction accuracy")
+        .addStringOption((option) =>
+          option.setName("server_seed_hash").setDescription("Hashed server seed (64 character hex string)").setRequired(true),
+        )
+        .addStringOption((option) =>
+          option.setName("client_seed").setDescription("Active client seed (e.g., VqsjloxT6b)").setRequired(true),
+        )
+        .addIntegerOption((option) =>
+          option.setName("nonce").setDescription("Amount of bets with per seed (e.g., 3002)").setRequired(true),
+        )
+        .addIntegerOption((option) =>
+          option.setName("num_mines").setDescription("Number of mines in the game (1-24)").setRequired(true),
+        )
+        .addStringOption((option) =>
+          option.setName("mine_positions").setDescription("Comma-separated mine positions (e.g., 3,7,12,18,22)").setRequired(true),
+        ),
+      new SlashCommandBuilder()
+        .setName("howtosubmitresult")
+        .setDescription("Learn how to submit game results and why it matters")
+        .setDefaultMemberPermissions(0),
+      new SlashCommandBuilder()
+        .setName("myresults")
+        .setDescription("View how many game results you have submitted")
+        .setDefaultMemberPermissions(0),
+      new SlashCommandBuilder()
+        .setName("leaderboard")
+        .setDescription("View the leaderboard of top result submitters")
+        .setDefaultMemberPermissions(0),
+      new SlashCommandBuilder()
+        .setName("admin")
+        .setDescription("Admin panel for managing verification system")
+        .addSubcommand((subcommand) => subcommand.setName("stats").setDescription("View verification statistics"))
+        .addSubcommand((subcommand) =>
+          subcommand
+            .setName("unban")
+            .setDescription("Unban a user from submitting results")
+            .addStringOption((option) => option.setName("user_id").setDescription("User ID to unban").setRequired(true)),
+        )
+        .addSubcommand((subcommand) =>
+          subcommand
+            .setName("revoke")
+            .setDescription("Revoke a user's access to the prediction service")
+            .addStringOption((option) => option.setName("user_id").setDescription("User ID to revoke access").setRequired(true)),
+        ),
+    ];
 
-  client.application.commands.set(commands);
+    await client.application.commands.set(commands);
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Bot startup error: ${error.message}`);
+  }
 });
 
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   if (interaction.commandName === "predict" || interaction.commandName === "submitresult") {
-    await interaction.deferReply();
+    try {
+      await interaction.deferReply();
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] Failed to defer reply: ${error.message}`);
+      return;
+    }
   }
 
   const { commandName } = interaction;
 
-  if (commandName === "verify" || commandName === "emergency-verify") {
+  if (commandName === "verify" || commandName === "emergency-verify" || commandName === "bulk-verify") {
     if (!ADMIN_USER_IDS.includes(interaction.user.id)) {
-      console.log(`[${new Date().toISOString()}] Unauthorized ${commandName} attempt by ${interaction.user.id}`);
       const unauthorizedEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
         .setTitle("🚫 Access Denied")
         .setDescription("**You are not authorized to use this command**")
         .setTimestamp();
-
       await interaction.reply({ embeds: [unauthorizedEmbed], ephemeral: true });
       return;
     }
 
-    const userId = interaction.options.getString("user_id");
-    const duration = commandName === "verify" ? interaction.options.getInteger("duration") : null;
-    const expires = duration ? Date.now() + duration * 60 * 60 * 1000 : null;
+    try {
+      if (commandName === "verify" || commandName === "emergency-verify") {
+        const userId = interaction.options.getString("user_id");
+        const duration = commandName === "verify" ? interaction.options.getInteger("duration") : null;
+        const expires = duration ? Date.now() + duration * 60 * 60 * 1000 : null;
 
-    if (!/^\d{17,19}$/.test(userId)) {
-      console.log(`[${new Date().toISOString()}] Invalid user ID in ${commandName}: ${userId}`);
-      const invalidEmbed = new EmbedBuilder()
+        if (!/^\d{17,19}$/.test(userId)) {
+          const invalidEmbed = new EmbedBuilder()
+            .setColor("#E74C3C")
+            .setTitle("❌ Invalid User ID")
+            .setDescription("**The provided user ID is invalid**")
+            .addFields({
+              name: "🔧 Troubleshooting",
+              value: "Ensure the user ID is a valid Discord user ID (17-19 digits).",
+              inline: false,
+            })
+            .setTimestamp();
+          await interaction.reply({ embeds: [invalidEmbed], ephemeral: true });
+          return;
+        }
+
+        verifiedUsers.set(userId, { expires });
+        await saveVerifiedUsers();
+
+        const successEmbed = new EmbedBuilder()
+          .setColor("#27AE60")
+          .setTitle("✅ User Verified")
+          .setDescription(`**Access granted to <@${userId}>**`)
+          .addFields({
+            name: "🎯 Access Granted",
+            value: "The user can now use the `/predict` command to analyze mine patterns.",
+            inline: false,
+          })
+          .addFields({
+            name: "⏰ Access Duration",
+            value: expires ? `Expires <t:${Math.floor(expires / 1000)}:R>` : "Permanent access",
+            inline: false,
+          })
+          .setTimestamp()
+          .setFooter({ text: "Admin Panel • User Verification" });
+
+        await interaction.reply({ embeds: [successEmbed], ephemeral: true });
+
+        try {
+          const user = await client.users.fetch(userId);
+          const userEmbed = new EmbedBuilder()
+            .setColor("#27AE60")
+            .setTitle("✅ Verification Successful")
+            .setDescription("**You have been granted access to the mine prediction service!**")
+            .addFields({
+              name: "🎯 Access Granted",
+              value: "You can now use the `/predict` command to analyze mine patterns.",
+              inline: false,
+            })
+            .addFields({
+              name: "⏰ Access Duration",
+              value: expires ? `Expires <t:${Math.floor(expires / 1000)}:R>` : "Permanent access",
+              inline: false,
+            })
+            .setTimestamp()
+            .setFooter({ text: "Professional Mine Prediction Service" });
+          await user.send({ embeds: [userEmbed] });
+        } catch (error) {
+          await interaction.followUp({
+            content: `Access granted, but could not notify <@${userId}> (DMs may be closed or user not found).`,
+            ephemeral: true,
+          });
+        }
+      } else if (commandName === "bulk-verify") {
+        const userIdsString = interaction.options.getString("user_ids");
+        const duration = interaction.options.getInteger("duration");
+        const expires = duration ? Date.now() + duration * 60 * 60 * 1000 : null;
+        const userIds = userIdsString.split(",").map((id) => id.trim()).filter((id) => /^\d{17,19}$/.test(id));
+
+        if (userIds.length === 0) {
+          const invalidEmbed = new EmbedBuilder()
+            .setColor("#E74C3C")
+            .setTitle("❌ Invalid User IDs")
+            .setDescription("**No valid user IDs provided**")
+            .addFields({
+              name: "🔧 Troubleshooting",
+              value: "Provide comma-separated valid Discord user IDs (17-19 digits).",
+              inline: false,
+            })
+            .setTimestamp();
+          await interaction.reply({ embeds: [invalidEmbed], ephemeral: true });
+          return;
+        }
+
+        userIds.forEach((userId) => verifiedUsers.set(userId, { expires }));
+        await saveVerifiedUsers();
+
+        const successEmbed = new EmbedBuilder()
+          .setColor("#27AE60")
+          .setTitle("✅ Users Verified")
+          .setDescription(`**Access granted to ${userIds.length} users**`)
+          .addFields({
+            name: "🎯 Users",
+            value: userIds.map((id) => `<@${id}>`).join(", "),
+            inline: false,
+          })
+          .addFields({
+            name: "⏰ Access Duration",
+            value: expires ? `Expires <t:${Math.floor(expires / 1000)}:R>` : "Permanent access",
+            inline: false,
+          })
+          .setTimestamp()
+          .setFooter({ text: "Admin Panel • Bulk Verification" });
+
+        await interaction.reply({ embeds: [successEmbed], ephemeral: true });
+
+        for (const userId of userIds) {
+          try {
+            const user = await client.users.fetch(userId);
+            const userEmbed = new EmbedBuilder()
+              .setColor("#27AE60")
+              .setTitle("✅ Verification Successful")
+              .setDescription("**You have been granted access to the mine prediction service!**")
+              .addFields({
+                name: "🎯 Access Granted",
+                value: "You can now use the `/predict` command to analyze mine patterns.",
+                inline: false,
+              })
+              .addFields({
+                name: "⏰ Access Duration",
+                value: expires ? `Expires <t:${Math.floor(expires / 1000)}:R>` : "Permanent access",
+                inline: false,
+              })
+              .setTimestamp()
+              .setFooter({ text: "Professional Mine Prediction Service" });
+            await user.send({ embeds: [userEmbed] });
+          } catch (error) {
+            await interaction.followUp({
+              content: `Access granted, but could not notify <@${userId}> (DMs may be closed or user not found).`,
+              ephemeral: true,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] ${commandName} error: ${error.message}`);
+      const errorEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
-        .setTitle("❌ Invalid User ID")
-        .setDescription("**The provided user ID is invalid**")
+        .setTitle("❌ Verification Error")
+        .setDescription("**An error occurred while processing the verification**")
         .addFields({
           name: "🔧 Troubleshooting",
-          value: "Ensure the user ID is a valid Discord user ID (17-19 digits).",
+          value: "Please try again or contact support if the issue persists.",
           inline: false,
         })
         .setTimestamp();
-
-      await interaction.reply({ embeds: [invalidEmbed], ephemeral: true });
-      return;
-    }
-
-    verifiedUsers.set(userId, { expires });
-    await saveVerifiedUsers();
-    console.log(`[${new Date().toISOString()}] ${commandName} granted access to user ${userId}, expires: ${expires ? new Date(expires).toISOString() : "permanent"}, verifiedUsers: ${[...verifiedUsers.keys()]}`);
-
-    const successEmbed = new EmbedBuilder()
-      .setColor("#27AE60")
-      .setTitle("✅ User Verified")
-      .setDescription(`**Access granted to <@${userId}>**`)
-      .addFields({
-        name: "🎯 Access Granted",
-        value: "The user can now use the `/predict` command to analyze mine patterns.",
-        inline: false,
-      })
-      .addFields({
-        name: "⏰ Access Duration",
-        value: expires ? `Expires <t:${Math.floor(expires / 1000)}:R>` : "Permanent access",
-        inline: false,
-      })
-      .setTimestamp()
-      .setFooter({ text: "Admin Panel • User Verification" });
-
-    await interaction.reply({ embeds: [successEmbed], ephemeral: true });
-
-    // Notify the user
-    try {
-      const user = await client.users.fetch(userId);
-      const userEmbed = new EmbedBuilder()
-        .setColor("#27AE60")
-        .setTitle("✅ Verification Successful")
-        .setDescription("**You have been granted access to the mine prediction service!**")
-        .addFields({
-          name: "🎯 Access Granted",
-          value: "You can now use the `/predict` command to analyze mine patterns.",
-          inline: false,
-        })
-        .addFields({
-          name: "⏰ Access Duration",
-          value: expires ? `Expires <t:${Math.floor(expires / 1000)}:R>` : "Permanent access",
-          inline: false,
-        })
-        .setTimestamp()
-        .setFooter({ text: "Professional Mine Prediction Service" });
-
-      await user.send({ embeds: [userEmbed] });
-      console.log(`[${new Date().toISOString()}] Notified user ${userId} of verification`);
-    } catch (error) {
-      console.error(`[${new Date().toISOString()}] Failed to notify user ${userId}:`, error.message, error.stack);
-      await interaction.followUp({
-        content: `Access granted, but could not notify <@${userId}> (DMs may be closed or user not found).`,
-        ephemeral: true,
-      });
+      await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
     }
     return;
   }
 
   if (commandName === "admin") {
     if (!ADMIN_USER_IDS.includes(interaction.user.id)) {
-      console.log(`[${new Date().toISOString()}] Unauthorized /admin attempt by ${interaction.user.id}`);
       const unauthorizedEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
         .setTitle("🚫 Access Denied")
         .setDescription("**You are not authorized to use admin commands**")
         .setTimestamp();
-
       await interaction.reply({ embeds: [unauthorizedEmbed], ephemeral: true });
       return;
     }
 
-    const subcommand = interaction.options.getSubcommand();
+    try {
+      const subcommand = interaction.options.getSubcommand();
+      if (subcommand === "stats") {
+        cleanExpiredUsers();
+        const verifiedUsersList =
+          verifiedUsers.size > 0
+            ? Array.from(verifiedUsers.entries())
+                .map(([userId, data]) => {
+                  const expiryText = data.expires ? `(expires <t:${Math.floor(data.expires / 1000)}:R>)` : "(permanent)";
+                  return `<@${userId}> ${expiryText}`;
+                })
+                .join("\n")
+            : "No verified users";
 
-    if (subcommand === "stats") {
-      cleanExpiredUsers();
-      const verifiedUsersList =
-        Array.from(verifiedUsers.entries())
-          .map(([userId, data]) => {
-            const expiryText = data.expires ? `(expires <t:${Math.floor(data.expires / 1000)}:R>)` : "(permanent)";
-            return `<@${userId}> ${expiryText}`;
-          })
-          .join("\n") || "No verified users";
+        const statsEmbed = new EmbedBuilder()
+          .setColor("#9B59B6")
+          .setTitle("📊 Verification System Statistics")
+          .setDescription("**Current system status and metrics**")
+          .addFields(
+            {
+              name: "✅ Verified Users",
+              value: `${verifiedUsers.size} users\n${verifiedUsersList}`,
+              inline: false,
+            },
+            {
+              name: "📤 Total Submissions",
+              value: `${submissions.size} users, ${Array.from(submissions.values()).reduce((sum, data) => sum + data.count, 0)} submissions`,
+              inline: true,
+            },
+            {
+              name: "🚫 Banned Users",
+              value: `${bannedUsers.size} users`,
+              inline: true,
+            },
+            {
+              name: "🤖 Bot Status",
+              value: "Online & Active",
+              inline: true,
+            },
+            {
+              name: "⏱️ System Uptime",
+              value: `${Math.floor(process.uptime() / 60)} minutes`,
+              inline: false,
+            },
+          )
+          .setTimestamp()
+          .setFooter({ text: "Admin Panel • System Statistics" });
 
-      const statsEmbed = new EmbedBuilder()
-        .setColor("#9B59B6")
-        .setTitle("📊 Verification System Statistics")
-        .setDescription("**Current system status and metrics**")
-        .addFields(
-          {
-            name: "✅ Verified Users",
-            value: `${verifiedUsers.size} users\n${verifiedUsersList}`,
-            inline: false,
-          },
-          {
-            name: "📤 Total Submissions",
-            value: `${submissions.size} users, ${Array.from(submissions.values()).reduce((sum, data) => sum + data.count, 0)} submissions`,
-            inline: true,
-          },
-          {
-            name: "🚫 Banned Users",
-            value: `${bannedUsers.size} users`,
-            inline: true,
-          },
-          {
-            name: "🤖 Bot Status",
-            value: "Online & Active",
-            inline: true,
-          },
-        )
+        await interaction.reply({ embeds: [statsEmbed], ephemeral: true });
+      } else if (subcommand === "unban") {
+        const userId = interaction.options.getString("user_id");
+        if (bannedUsers.has(userId)) {
+          bannedUsers.delete(userId);
+          await interaction.reply({ content: `User <@${userId}> has been unbanned.`, ephemeral: true });
+        } else {
+          await interaction.reply({ content: `User <@${userId}> is not banned.`, ephemeral: true });
+        }
+      } else if (subcommand === "revoke") {
+        const userId = interaction.options.getString("user_id");
+        if (verifiedUsers.has(userId)) {
+          verifiedUsers.delete(userId);
+          await saveVerifiedUsers();
+          await interaction.reply({ content: `Access revoked for <@${userId}>.`, ephemeral: true });
+        } else {
+          await interaction.reply({ content: `<@${userId}> does not have access.`, ephemeral: true });
+        }
+      }
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] Admin command error: ${error.message}`);
+      const errorEmbed = new EmbedBuilder()
+        .setColor("#E74C3C")
+        .setTitle("❌ Admin Command Error")
+        .setDescription("**An error occurred while processing the admin command**")
         .addFields({
-          name: "⏱️ System Uptime",
-          value: `${Math.floor(process.uptime() / 60)} minutes`,
+          name: "🔧 Troubleshooting",
+          value: "Please try again or contact support if the issue persists.",
           inline: false,
         })
-        .setTimestamp()
-        .setFooter({ text: "Admin Panel • System Statistics" });
-
-      await interaction.reply({ embeds: [statsEmbed], ephemeral: true });
-    } else if (subcommand === "unban") {
-      const userId = interaction.options.getString("user_id");
-      if (bannedUsers.has(userId)) {
-        bannedUsers.delete(userId);
-        console.log(`[${new Date().toISOString()}] Unbanned user ${userId}`);
-        await interaction.reply({ content: `User <@${userId}> has been unbanned.`, ephemeral: true });
-      } else {
-        await interaction.reply({ content: `User <@${userId}> is not banned.`, ephemeral: true });
-      }
-    } else if (subcommand === "revoke") {
-      const userId = interaction.options.getString("user_id");
-      if (verifiedUsers.has(userId)) {
-        verifiedUsers.delete(userId);
-        await saveVerifiedUsers();
-        console.log(`[${new Date().toISOString()}] Revoked access for user ${userId}, verifiedUsers: ${[...verifiedUsers.keys()]}`);
-        await interaction.reply({ content: `Access revoked for <@${userId}>.`, ephemeral: true });
-      } else {
-        await interaction.reply({ content: `<@${userId}> does not have access.`, ephemeral: true });
-      }
+        .setTimestamp();
+      await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
     }
-
     return;
   }
 
@@ -610,8 +725,6 @@ client.on("interactionCreate", async (interaction) => {
     try {
       cleanExpiredUsers();
       const userData = verifiedUsers.get(interaction.user.id);
-      console.log(`[${new Date().toISOString()}] /predict attempt by ${interaction.user.id}, verified: ${!!userData}, expires: ${userData?.expires ? new Date(userData.expires).toISOString() : "permanent"}, verifiedUsers: ${[...verifiedUsers.keys()]}`);
-      
       if (!userData) {
         const verificationRequiredEmbed = new EmbedBuilder()
           .setColor("#F39C12")
@@ -629,7 +742,6 @@ client.on("interactionCreate", async (interaction) => {
           })
           .setTimestamp()
           .setFooter({ text: "Professional Mine Prediction Service • Verification Required" });
-
         await interaction.editReply({ embeds: [verificationRequiredEmbed] });
         return;
       }
@@ -661,7 +773,6 @@ client.on("interactionCreate", async (interaction) => {
             inline: false,
           })
           .setTimestamp();
-
         await interaction.editReply({ embeds: [errorEmbed] });
         return;
       }
@@ -681,47 +792,41 @@ client.on("interactionCreate", async (interaction) => {
       const embed = new EmbedBuilder()
         .setColor("#2C3E50")
         .setTitle("🔮 Advanced Mine Pattern Predictions")
-        .setDescription(`**${analysis.method.charAt(0).toUpperCase() + analysis.method.slice(1)} Analysis for Rollbet**`);
-
-      embed.addFields(
-        {
-          name: "🎯 Prediction Method",
-          value: `Algorithm: ${analysis.patternType}\nMethod: ${analysis.method.charAt(0).toUpperCase() + analysis.method.slice(1)}\nWebsite: Rollbet`,
-          inline: true,
-        },
-        {
-          name: "📊 Analysis Data",
-          value: `Grid: 5×5\nSafe Mines: ${safeMines}\nDangerous Mines: ${predictor.mines}\nRisk Level: ${analysis.riskLevel}`,
-          inline: true,
-        },
-        {
-          name: "🔑 Seed Information",
-          value: `Server Hash: \`${serverSeedHash.substring(0, 8)}...\`\nNonce: ${nonce}\nEntropy: ${analysis.entropyScore}%`,
-          inline: true,
-        },
-      );
-
-      const gridDisplay = predictor.getGridDisplay();
-      embed.addFields({
-        name: "🎯 Predicted Mine Locations",
-        value: `\`\`\`\n${gridDisplay}\`\`\``,
-        inline: false,
-      });
-
-      embed.addFields({
-        name: "🔍 Verification Signature",
-        value: `\`${verification.hash}\``,
-        inline: false,
-      });
-
-      embed.setFooter({
-        text: `Professional Mine Prediction Service • ${analysis.method.charAt(0).toUpperCase() + analysis.method.slice(1)} Algorithm v5.3`,
-      });
+        .setDescription(`**${analysis.method.charAt(0).toUpperCase() + analysis.method.slice(1)} Analysis for Rollbet**`)
+        .addFields(
+          {
+            name: "🎯 Prediction Method",
+            value: `Algorithm: ${analysis.patternType}\nMethod: ${analysis.method.charAt(0).toUpperCase() + analysis.method.slice(1)}\nWebsite: Rollbet`,
+            inline: true,
+          },
+          {
+            name: "📊 Analysis Data",
+            value: `Grid: 5×5\nSafe Mines: ${safeMines}\nDangerous Mines: ${predictor.mines}\nRisk Level: ${analysis.riskLevel}`,
+            inline: true,
+          },
+          {
+            name: "🔑 Seed Information",
+            value: `Server Hash: \`${serverSeedHash.substring(0, 8)}...\`\nNonce: ${nonce}\nEntropy: ${analysis.entropyScore}%`,
+            inline: true,
+          },
+          {
+            name: "🎯 Predicted Mine Locations",
+            value: `\`\`\`\n${predictor.getGridDisplay()}\`\`\``,
+            inline: false,
+          },
+          {
+            name: "🔍 Verification Signature",
+            value: `\`${verification.hash}\``,
+            inline: false,
+          },
+        )
+        .setFooter({
+          text: `Professional Mine Prediction Service • ${analysis.method.charAt(0).toUpperCase() + analysis.method.slice(1)} Algorithm v5.3`,
+        });
 
       await interaction.editReply({ embeds: [embed] });
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] Predict command error for ${interaction.user.id}:`, error.message, error.stack);
-
+      console.error(`[${new Date().toISOString()}] Predict command error: ${error.message}`);
       const errorEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
         .setTitle("❌ Prediction Error")
@@ -732,21 +837,13 @@ client.on("interactionCreate", async (interaction) => {
           inline: false,
         })
         .setTimestamp();
-
-      try {
-        await interaction.editReply({ embeds: [errorEmbed] });
-      } catch (replyError) {
-        console.error(`[${new Date().toISOString()}] Failed to send error response:`, replyError.message, replyError.stack);
-      }
+      await interaction.editReply({ embeds: [errorEmbed] });
     }
     return;
   }
 
   if (commandName === "submitresult") {
     try {
-      console.log(`[${new Date().toISOString()}] Processing /submitresult for user ${interaction.user.id}`);
-      await interaction.deferReply();
-
       if (bannedUsers.has(interaction.user.id)) {
         const banEmbed = new EmbedBuilder()
           .setColor("#E74C3C")
@@ -758,7 +855,6 @@ client.on("interactionCreate", async (interaction) => {
             inline: false,
           })
           .setTimestamp();
-
         await interaction.editReply({ embeds: [banEmbed] });
         return;
       }
@@ -769,10 +865,7 @@ client.on("interactionCreate", async (interaction) => {
       const numMines = interaction.options.getInteger("num_mines");
       const minePositions = interaction.options.getString("mine_positions");
 
-      const startValidation = Date.now();
       const validation = validateResultInputs(serverSeedHash, clientSeed, nonce, numMines, minePositions);
-      console.log(`[${new Date().toISOString()}] Validation took ${Date.now() - startValidation}ms`);
-
       if (!validation.isValid) {
         const errorEmbed = new EmbedBuilder()
           .setColor("#E74C3C")
@@ -800,7 +893,6 @@ client.on("interactionCreate", async (interaction) => {
             inline: false,
           })
           .setTimestamp();
-
         await interaction.editReply({ embeds: [errorEmbed] });
         return;
       }
@@ -821,7 +913,6 @@ client.on("interactionCreate", async (interaction) => {
             inline: false,
           })
           .setTimestamp();
-
         await interaction.editReply({ embeds: [usedSeedEmbed] });
         return;
       }
@@ -829,8 +920,6 @@ client.on("interactionCreate", async (interaction) => {
       const spamCheck = checkSpamAndRepetition(interaction.user.id, validation.parsedPositions);
       if (!spamCheck.isValid) {
         bannedUsers.set(interaction.user.id, { reason: spamCheck.reason, timestamp: Date.now() });
-        console.log(`[${new Date().toISOString()}] Banned user ${interaction.user.id} for: ${spamCheck.reason}`);
-
         const banEmbed = new EmbedBuilder()
           .setColor("#E74C3C")
           .setTitle("🚫 Submission Banned")
@@ -846,16 +935,12 @@ client.on("interactionCreate", async (interaction) => {
             inline: false,
           })
           .setTimestamp();
-
         await interaction.editReply({ embeds: [banEmbed] });
         return;
       }
 
-      const startVerification = Date.now();
       const predictor = new MinePredictor(5, 5, 25 - numMines, serverSeedHash, nonce);
       const analysisResult = predictor.verifySubmission(clientSeed, nonce, numMines, validation.parsedPositions, serverSeedHash);
-      console.log(`[${new Date().toISOString()}] Verification took ${Date.now() - startVerification}ms`);
-
       if (!analysisResult.isValid) {
         const invalidEmbed = new EmbedBuilder()
           .setColor("#E74C3C")
@@ -877,13 +962,11 @@ client.on("interactionCreate", async (interaction) => {
             inline: false,
           })
           .setTimestamp();
-
         await interaction.editReply({ embeds: [invalidEmbed] });
         return;
       }
 
       usedServerSeeds.set(serverSeedHash, { userId: interaction.user.id, timestamp: Date.now() });
-
       const userSubmissions = submissions.get(interaction.user.id) || { count: 0, lastSubmission: 0, timestamps: [], positions: [] };
       userSubmissions.count += 1;
       userSubmissions.lastSubmission = Date.now();
@@ -913,8 +996,7 @@ client.on("interactionCreate", async (interaction) => {
 
       await interaction.editReply({ embeds: [resultEmbed] });
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] Submitresult command error:`, error.message, error.stack);
-
+      console.error(`[${new Date().toISOString()}] Submitresult command error: ${error.message}`);
       const errorEmbed = new EmbedBuilder()
         .setColor("#E74C3C")
         .setTitle("❌ Submission Error")
@@ -930,12 +1012,7 @@ client.on("interactionCreate", async (interaction) => {
           inline: false,
         })
         .setTimestamp();
-
-      try {
-        await interaction.editReply({ embeds: [errorEmbed] });
-      } catch (replyError) {
-        console.error(`[${new Date().toISOString()}] Failed to send error response:`, replyError.message, replyError.stack);
-      }
+      await interaction.editReply({ embeds: [errorEmbed] });
     }
     return;
   }
@@ -947,8 +1024,7 @@ client.on("interactionCreate", async (interaction) => {
       .setDescription("**Submitting your Rollbet game results helps improve our prediction accuracy for everyone!**")
       .addFields({
         name: "🎯 Why Submit?",
-        value:
-          "Your submissions enhance our heatmap, making predictions more accurate. Plus, you’ll climb the leaderboard and earn bragging rights!",
+        value: "Your submissions enhance our heatmap, making predictions more accurate. Plus, you’ll climb the leaderboard and earn bragging rights!",
         inline: false,
       })
       .addFields({
@@ -977,7 +1053,6 @@ client.on("interactionCreate", async (interaction) => {
 
   if (commandName === "myresults") {
     const userSubmissions = submissions.get(interaction.user.id) || { count: 0, lastSubmission: 0 };
-
     const resultsEmbed = new EmbedBuilder()
       .setColor("#3498DB")
       .setTitle("📊 Your Submission Stats")
@@ -1032,14 +1107,12 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     leaderboardEmbed.setTimestamp().setFooter({ text: "Professional Mine Prediction Service • Leaderboard" });
-
     await interaction.reply({ embeds: [leaderboardEmbed] });
   }
 });
 
 function validateInputs(serverSeedHash, safeMines, nonce) {
   const errors = [];
-
   if (!/^[0-9a-fA-F]{64}$/.test(serverSeedHash)) {
     errors.push("Server seed hash must be a 64-character hex string (0-9, a-f).");
   }
@@ -1049,7 +1122,6 @@ function validateInputs(serverSeedHash, safeMines, nonce) {
   if (!Number.isInteger(nonce) || nonce < 0) {
     errors.push("Nonce must be a non-negative integer.");
   }
-
   return {
     isValid: errors.length === 0,
     errors,
