@@ -61,22 +61,24 @@ async function fetchWithRetry(url, options, maxRetries = 3, baseDelay = 1000) {
     let retries = 0;
     while (retries < maxRetries) {
         try {
+            console.log(`[DEBUG] Fetching ${url}, attempt ${retries + 1}/${maxRetries}`);
             const response = await fetch(url, options);
             if (response.status === 429) { // Rate limit
                 const delay = baseDelay * Math.pow(2, retries);
-                console.warn(`Rate limit hit. Retrying in ${delay / 1000}s...`);
+                console.warn(`[WARN] Rate limit hit for ${url}. Retrying in ${delay / 1000}s...`);
                 await new Promise(res => setTimeout(res, delay));
                 retries++;
                 continue;
             }
             if (!response.ok) {
-                throw new Error(`HTTP error! Status: ${response.status} - ${await response.text()}`);
+                const errorText = await response.text();
+                throw new Error(`HTTP error! Status: ${response.status} - ${errorText}`);
             }
             return response;
         } catch (error) {
-            console.error(`Fetch attempt failed (${retries + 1}/${maxRetries}):`, error.message);
+            console.error(`[ERROR] Fetch attempt failed for ${url} (${retries + 1}/${maxRetries}):`, ensureString(error.message));
             const delay = baseDelay * Math.pow(2, retries);
-            console.warn(`Retrying in ${delay / 1000}s...`);
+            console.warn(`[WARN] Retrying ${url} in ${delay / 1000}s...`);
             await new Promise(res => setTimeout(res, delay));
             retries++;
         }
@@ -88,6 +90,7 @@ async function fetchWithRetry(url, options, maxRetries = 3, baseDelay = 1000) {
  * Handles self-pinging the bot's own URL to keep it awake on Render.
  */
 async function startSelfPing() {
+    console.log(`[DEBUG] startSelfPing function called.`);
     if (!SELF_PING_URL) {
         console.warn('SELF_PING_URL is not set. Self-pinging will not occur.');
         return;
@@ -97,10 +100,10 @@ async function startSelfPing() {
         if (response.ok) {
             console.log(`Self-ping successful to ${SELF_PING_URL}`);
         } else {
-            console.warn(`Self-ping failed to ${SELF_PING_URL} with status: ${response.status}`);
+            console.warn(`Self-ping failed to ${SELF_PING_URL} with status: ${ensureString(response.status)}`);
         }
     } catch (error) {
-        console.error(`Error during self-ping to ${SELF_PING_URL}:`, error.message);
+        console.error(`Error during self-ping to ${SELF_PING_URL}:`, ensureString(error.message));
     }
 }
 
@@ -116,7 +119,7 @@ async function startSelfPing() {
 function calculateRollbetMines(serverSeed, clientSeed, nonce, numMines) {
     console.warn("WARNING: calculateRollbetMines is using a placeholder. Please implement Rollbet's actual provably fair algorithm.");
     // This is a placeholder. Replace with Rollbet's actual algorithm.
-    if (numMines === 3 && clientSeed.startsWith('test')) {
+    if (numMines === 3 && ensureString(clientSeed).startsWith('test')) {
         return [1, 5, 10]; // Example: predictable mines for a 'test' client seed
     }
     return [];
@@ -130,9 +133,11 @@ let verifiedUsersCache = new Map(); // Cache for verified users, declared global
  * Establishes a connection to MongoDB.
  */
 async function connectToMongoDB() {
+    console.log(`[DEBUG] connectToMongoDB function called. MONGO_URI: ${MONGO_URI ? 'Set' : 'Not Set'}`);
     if (!MONGO_URI) {
         console.error('MONGO_URI environment variable is not set. Cannot connect to MongoDB.');
-        process.exit(1); // Exit if critical config is missing
+        // Exit is now done in the main execution block if MONGO_URI is critical.
+        throw new Error("MongoDB URI is not set."); // Throw to be caught by main catch block
     }
     try {
         dbClient = new MongoClient(MONGO_URI);
@@ -140,9 +145,8 @@ async function connectToMongoDB() {
         console.log('Connected to MongoDB');
         await loadInitialVerifiedUsersCache();
     } catch (error) {
-        console.error('Failed to connect to MongoDB:', error.message);
-        console.error('Bot cannot function without MongoDB connection. Exiting.');
-        process.exit(1); // Fatal error
+        console.error('Failed to connect to MongoDB:', ensureString(error.message));
+        throw new Error(`MongoDB connection failed: ${ensureString(error.message)}`); // Re-throw to propagate
     }
 }
 
@@ -150,6 +154,11 @@ async function connectToMongoDB() {
  * Loads verified users into an in-memory cache from MongoDB.
  */
 async function loadInitialVerifiedUsersCache() {
+    console.log(`[DEBUG] loadInitialVerifiedUsersCache function called.`);
+    if (!dbClient || !dbClient.db) {
+        console.warn('MongoDB client not initialized. Cannot load verifiedUsers cache.');
+        return;
+    }
     try {
         const db = dbClient.db('MineBotDB'); // REPLACE WITH YOUR ACTUAL DATABASE NAME
         const collection = db.collection('verifiedUsers');
@@ -157,7 +166,7 @@ async function loadInitialVerifiedUsersCache() {
         verifiedUsersCache = new Map(users.map(user => [user.userId, user]));
         console.log(`Loaded ${verifiedUsersCache.size} verifiedUsers into cache from MongoDB`);
     } catch (error) {
-        console.error('Error loading initial verifiedUsers cache from MongoDB:', error.message);
+        console.error('Error loading initial verifiedUsers cache from MongoDB:', ensureString(error.message));
     }
 }
 
@@ -168,6 +177,7 @@ async function loadInitialVerifiedUsersCache() {
  * @returns {Promise<string>} The AI-generated text.
  */
 async function callGeminiAPI(prompt) {
+    console.log(`[DEBUG] callGeminiAPI function called with prompt: ${ensureString(prompt).substring(0, 50)}...`);
     const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
     const apiKey = ""; // Canvas will automatically provide it in runtime
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
@@ -184,11 +194,11 @@ async function callGeminiAPI(prompt) {
             result.candidates[0].content.parts.length > 0) {
             return result.candidates[0].content.parts[0].text;
         } else {
-            console.error("Unexpected Gemini API response structure:", result);
+            console.error("Unexpected Gemini API response structure:", JSON.stringify(result, null, 2));
             return "Could not generate analysis due to an unexpected AI response.";
         }
     } catch (error) {
-        console.error('Failed to get Gemini API response:', error.message);
+        console.error('Failed to get Gemini API response:', ensureString(error.message));
         return "Failed to generate analysis after multiple retries. Please try again later.";
     }
 }
@@ -279,190 +289,259 @@ app.listen(PORT, () => {
     console.log(`🌐 HTTP server running on port ${PORT}`);
 });
 
-// --- Discord Client Event Listeners (Setup After Client is Instantiated) ---
-
-client.on('ready', async () => {
-    console.log(`🤖 ${ensureString(client.user.tag)} is online and ready to analyze mines!`);
-    console.log(`[DEBUG] Attempting MongoDB connection and cache load from client.on('ready')...`);
-    await connectToMongoDB(); // Connect and load cache on bot start
-
-    if (SELF_PING_URL) {
-        console.log(`[DEBUG] SELF_PING_URL is set. Preparing self-ping system.`);
-        console.log(`Starting self-ping system. Pinging ${SELF_PING_URL} every ${PING_INTERVAL_MS / 1000 / 60} minutes.`);
-        startSelfPing(); // Initial ping
-        setInterval(startSelfPing, PING_INTERVAL_MS); // Subsequent pings
-    } else {
-        console.warn('SELF_PING_URL environment variable not found. Self-ping system will not start. Bot may go idle on free tier.');
-    }
+// --- GLOBAL ERROR HANDLING (CRITICAL FOR DEBUGGING UNCAUGHT ERRORS) ---
+process.on('unhandledRejection', (reason, promise) => {
+    console.error(`[FATAL ERROR] Unhandled Rejection at: ${promise}\nReason: ${ensureString(reason?.message || reason)}`, reason);
+    // Consider graceful shutdown or restarting the process here in a production environment
+    process.exit(1); // Exit to force a restart on Render if an unhandled promise rejection occurs
 });
 
-client.on('guildMemberAdd', async member => {
-    console.log(`New member joined: ${ensureString(member.user.tag)} (${ensureString(member.id)})`);
+process.on('uncaughtException', (err) => {
+    console.error(`[FATAL ERROR] Uncaught Exception: ${ensureString(err.message)}`, err);
+    // Consider graceful shutdown or restarting the process here in a production environment
+    process.exit(1); // Exit to force a restart on Render if an uncaught synchronous exception occurs
+});
+
+// --- Discord Client Event Listeners and Main Execution Logic ---
+// Wrapped in an async IIFE to ensure sequential execution of setup.
+(async () => {
+    // 1. Connect to MongoDB first to ensure database is ready
+    console.log("[SETUP] Attempting to connect to MongoDB...");
     try {
-        const welcomeMessage = getWelcomeMessage(member.user.username);
-        await member.send(welcomeMessage);
-        console.log(`Sent welcome DM to new member: ${ensureString(member.user.tag)}`);
+        await connectToMongoDB();
+        console.log("[SETUP] MongoDB connection and cache load complete.");
     } catch (error) {
-        console.error(`Could not send welcome DM to ${ensureString(member.user.tag)}. Error: ${ensureString(error.message)}. They might have DMs disabled.`, error);
+        console.error(`[SETUP ERROR] Critical: Failed to establish MongoDB connection. Bot cannot proceed.`, ensureString(error.message));
+        process.exit(1); // Exit if MongoDB connection fails at startup
     }
-});
 
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isCommand()) return;
-
-    const { commandName } = interaction;
-    const userId = ensureString(interaction.user.id);
-    const userTag = ensureString(interaction.user.tag);
-
+    // 2. Login to Discord
+    console.log("[SETUP] Attempting Discord client login...");
     try {
-        // --- /verify Command Logic (Admin only) ---
-        if (commandName === 'verify') {
-            if (!isAuthorizedAdmin(userId)) {
-                await interaction.reply({ content: 'You do not have permission to use this command. Only designated administrators can verify users.', flags: [MessageFlags.Ephemeral] });
-                return;
-            }
+        await client.login(BOT_TOKEN);
+        console.log("[SETUP] Discord client login successful.");
+    } catch (error) {
+        console.error("[SETUP ERROR] Critical: Failed to login to Discord. Bot cannot proceed.", ensureString(error.message));
+        process.exit(1); // Exit if Discord login fails
+    }
 
-            const targetUser = interaction.options.getUser('user');
-            if (!targetUser) {
-                await interaction.reply({ content: 'Target user not found. Please provide a valid user.', flags: [MessageFlags.Ephemeral] });
-                return;
-            }
+    // 3. Setup Discord 'ready' event listener (will fire once bot is connected)
+    client.on('ready', async () => {
+        console.log(`🤖 ${ensureString(client.user.tag)} is online and ready to analyze mines!`);
 
-            const member = interaction.guild?.members.cache.get(ensureString(targetUser.id));
-            if (!member) {
-                await interaction.reply({ content: 'Could not find that user in this server. Please ensure the ID is correct or the user is in the server.', flags: [MessageFlags.Ephemeral] });
-                return;
-            }
+        if (SELF_PING_URL) {
+            console.log(`[SETUP] SELF_PING_URL is set. Preparing self-ping system.`);
+            console.log(`Starting self-ping system. Pinging ${SELF_PING_URL} every ${PING_INTERVAL_MS / 1000 / 60} minutes.`);
+            startSelfPing(); // Initial ping
+            setInterval(startSelfPing, PING_INTERVAL_MS); // Subsequent pings
+        } else {
+            console.warn('SELF_PING_URL environment variable not found. Self-ping system will not start. Bot may go idle on free tier.');
+        }
+    });
 
-            const durationOption = interaction.options.getString('duration');
-            let expiresAt = null;
-            let durationTextForDM = "Permanent access";
+    // 4. Setup other Discord event listeners
+    client.on('guildMemberAdd', async member => {
+        console.log(`New member joined: ${ensureString(member.user.tag)} (${ensureString(member.id)})`);
+        try {
+            const welcomeMessage = getWelcomeMessage(member.user.username);
+            await member.send(welcomeMessage);
+            console.log(`Sent welcome DM to new member: ${ensureString(member.user.tag)}`);
+        } catch (error) {
+            console.error(`Could not send welcome DM to ${ensureString(member.user.tag)}. Error: ${ensureString(error.message)}. They might have DMs disabled.`, error);
+        }
+    });
 
-            if (durationOption !== 'permanent') {
-                const days = parseInt(durationOption.replace('d', ''), 10);
-                if (!isNaN(days) && days > 0) {
-                    expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-                    durationTextForDM = `Access for ${days} Days (until ${expiresAt.toLocaleDateString()})`;
-                } else {
-                    await interaction.reply({ content: 'Invalid duration specified. Please use "permanent", "7d", "30d", "90d", or "365d".', flags: [MessageFlags.Ephemeral] });
-                    return;
-                }
-            }
-
-            const db = dbClient.db('MineBotDB');
-            const collection = db.collection('verifiedUsers');
-
-            await collection.updateOne(
-                { userId: ensureString(member.id) },
-                { $set: {
-                    userId: ensureString(member.id),
-                    username: ensureString(member.user.tag),
-                    isVerified: true,
-                    expiresAt: expiresAt,
-                    verifiedAt: new Date(),
-                    verifiedBy: userId
-                }},
-                { upsert: true }
-            );
-
-            verifiedUsersCache.set(ensureString(member.id), { userId: ensureString(member.id), isVerified: true, expiresAt: expiresAt });
-
-            await interaction.reply({ content: `${ensureString(member.user.tag)} has been verified! They can now use the \`/predict\` command.`, ephemeral: false });
-
+    client.on('interactionCreate', async interaction => {
+        // [IMPORTANT] Defer reply immediately for all commands to prevent "Application did not respond"
+        if (interaction.isCommand() && !interaction.deferred && !interaction.replied) {
             try {
-                await member.send(getVerificationSuccessDM(ensureString(member.user.username), ensureString(durationTextForDM)));
-                console.log(`Sent verification successful DM to ${ensureString(member.user.tag)}`);
-            } catch (dmError) {
-                console.error(`Could not send verification successful DM to ${ensureString(member.user.tag)}. Error: ${ensureString(dmError.message)}. They might have DMs disabled.`, dmError);
-                await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${ensureString(member.user.tag)} with important information, but their DMs might be disabled. Error: ${ensureString(dmError.message)})`, ephemeral: false });
+                await interaction.deferReply({ ephemeral: false }); // Defer to buy time, not always ephemeral
+                console.log(`[DEBUG] Deferred reply for command: /${interaction.commandName} by ${ensureString(interaction.user.tag)}`);
+            } catch (deferError) {
+                console.error(`[ERROR] Failed to defer reply for command /${interaction.commandName}: ${ensureString(deferError.message)}`, deferError);
+                // If defer fails, we might be too late or have a permissions issue.
+                // Try a direct reply as a last resort, though it might time out.
+                try {
+                    if (!interaction.replied) {
+                         await interaction.reply({ content: 'An unexpected issue occurred. Please try again.', ephemeral: true });
+                    }
+                } catch (fallbackError) {
+                    console.error(`[ERROR] Failed to send fallback reply for /${interaction.commandName}: ${ensureString(fallbackError.message)}`, fallbackError);
+                }
+                return; // Stop processing this interaction if deferal failed
             }
+        } else if (!interaction.isCommand()) {
+            return; // Only process commands for this listener
         }
 
-        // --- /admin subcommand group logic ---
-        else if (commandName === 'admin') {
-            if (!isAuthorizedAdmin(userId)) {
-                await interaction.reply({ content: 'You do not have permission to use admin commands.', flags: [MessageFlags.Ephemeral] });
-                return;
-            }
+        const { commandName } = interaction;
+        const userId = ensureString(interaction.user.id);
+        const userTag = ensureString(interaction.user.tag);
 
-            const subCommand = interaction.options.getSubcommand();
-            const db = dbClient.db('MineBotDB');
-
-            if (subCommand === 'revoke') {
-                const targetUser = interaction.options.getUser('user');
-                if (!targetUser) {
-                    await interaction.reply({ content: 'Please specify a user to revoke access from.', flags: [MessageFlags.Ephemeral] });
+        try {
+            // --- /verify Command Logic (Admin only) ---
+            if (commandName === 'verify') {
+                if (!isAuthorizedAdmin(userId)) {
+                    await interaction.editReply({ content: 'You do not have permission to use this command. Only designated administrators can verify users.', flags: [MessageFlags.Ephemeral] });
                     return;
                 }
-                const verifiedCollection = db.collection('verifiedUsers');
-                await verifiedCollection.updateOne(
-                    { userId: ensureString(targetUser.id) },
-                    { $set: { isVerified: false, revokedAt: new Date(), revokedBy: userId } }
-                );
-                verifiedUsersCache.delete(ensureString(targetUser.id));
-                await interaction.reply({ content: `${ensureString(targetUser.tag)}'s access has been revoked.`, ephemeral: false });
-            } else if (subCommand === 'stats') {
-                const gameResultsCollection = db.collection('gameResults');
-                const totalSubmissions = await gameResultsCollection.countDocuments();
-                const totalVerifiedUsers = await db.collection('verifiedUsers').countDocuments({ isVerified: true });
 
-                await interaction.reply({
-                    content: `**Bot Statistics:**\nTotal Game Submissions: ${totalSubmissions}\nTotal Verified Users: ${totalVerifiedUsers}`,
-                    ephemeral: false
-                });
-            } else if (subCommand === 'unban') {
                 const targetUser = interaction.options.getUser('user');
                 if (!targetUser) {
-                    await interaction.reply({ content: 'Please specify a user to unban.', flags: [MessageFlags.Ephemeral] });
+                    await interaction.editReply({ content: 'Target user not found. Please provide a valid user.', flags: [MessageFlags.Ephemeral] });
                     return;
                 }
-                const verifiedCollection = db.collection('verifiedUsers');
-                await verifiedCollection.updateOne(
-                    { userId: ensureString(targetUser.id) },
-                    { $unset: { isBanned: "" }, $set: { lastUnbannedAt: new Date(), unbannedBy: userId } }
-                );
-                await interaction.reply({ content: `${ensureString(targetUser.tag)} has been unbanned from submitting results.`, ephemeral: false });
-            }
-        }
 
-        // --- /emergency subcommand group logic ---
-        else if (commandName === 'emergency') {
-            if (!isAuthorizedAdmin(userId)) {
-                await interaction.reply({ content: 'You do not have permission to use emergency commands.', flags: [MessageFlags.Ephemeral] });
-                return;
-            }
-
-            const subCommand = interaction.options.getSubcommand();
-
-            if (subCommand === 'verify') {
-                const targetUser = interaction.options.getUser('user');
-                if (!targetUser) {
-                    await interaction.reply({ content: 'Please specify a user to force verify.', flags: [MessageFlags.Ephemeral] });
+                const member = interaction.guild?.members.cache.get(ensureString(targetUser.id));
+                if (!member) {
+                    await interaction.editReply({ content: 'Could not find that user in this server. Please ensure the ID is correct or the user is in the server.', flags: [MessageFlags.Ephemeral] });
                     return;
+                }
+
+                const durationOption = interaction.options.getString('duration');
+                let expiresAt = null;
+                let durationTextForDM = "Permanent access";
+
+                if (durationOption !== 'permanent') {
+                    const days = parseInt(durationOption.replace('d', ''), 10);
+                    if (!isNaN(days) && days > 0) {
+                        expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+                        durationTextForDM = `Access for ${days} Days (until ${expiresAt.toLocaleDateString()})`;
+                    } else {
+                        await interaction.editReply({ content: 'Invalid duration specified. Please use "permanent", "7d", "30d", "90d", or "365d".', flags: [MessageFlags.Ephemeral] });
+                        return;
+                    }
+                }
+
+                if (!dbClient || !dbClient.db) {
+                     await interaction.editReply({ content: 'Database is not connected. Please inform the bot administrator.', flags: [MessageFlags.Ephemeral] });
+                     console.error(`[ERROR] /verify command failed: MongoDB client not available.`);
+                     return;
                 }
                 const db = dbClient.db('MineBotDB');
-                const verifiedCollection = db.collection('verifiedUsers');
-                await verifiedCollection.updateOne(
-                    { userId: ensureString(targetUser.id) },
+                const collection = db.collection('verifiedUsers');
+
+                await collection.updateOne(
+                    { userId: ensureString(member.id) },
                     { $set: {
-                        userId: ensureString(targetUser.id),
-                        username: ensureString(targetUser.tag),
+                        userId: ensureString(member.id),
+                        username: ensureString(member.user.tag),
                         isVerified: true,
-                        expiresAt: null,
+                        expiresAt: expiresAt,
                         verifiedAt: new Date(),
-                        verifiedBy: userId,
-                        isEmergencyVerified: true
+                        verifiedBy: userId
                     }},
                     { upsert: true }
                 );
-                verifiedUsersCache.set(ensureString(targetUser.id), { userId: ensureString(targetUser.id), isVerified: true, expiresAt: null });
-                await interaction.reply({ content: `${ensureString(targetUser.tag)} has been **force verified** (emergency).`, ephemeral: false });
-            }
-        }
 
-        // --- /how_to_submit_result Command Logic ---
-        else if (commandName === 'how_to_submit_result') {
-            const helpMessage = `
+                verifiedUsersCache.set(ensureString(member.id), { userId: ensureString(member.id), isVerified: true, expiresAt: expiresAt });
+
+                await interaction.editReply({ content: `${ensureString(member.user.tag)} has been verified! They can now use the \`/predict\` command.`, ephemeral: false });
+
+                try {
+                    await member.send(getVerificationSuccessDM(ensureString(member.user.username), ensureString(durationTextForDM)));
+                    console.log(`Sent verification successful DM to ${ensureString(member.user.tag)}`);
+                } catch (dmError) {
+                    console.error(`Could not send verification successful DM to ${ensureString(member.user.tag)}. Error: ${ensureString(dmError.message)}. They might have DMs disabled.`, dmError);
+                    await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${ensureString(member.user.tag)} with important information, but their DMs might be disabled. Error: ${ensureString(dmError.message)})`, ephemeral: false });
+                }
+            }
+
+            // --- /admin subcommand group logic ---
+            else if (commandName === 'admin') {
+                if (!isAuthorizedAdmin(userId)) {
+                    await interaction.editReply({ content: 'You do not have permission to use admin commands.', flags: [MessageFlags.Ephemeral] });
+                    return;
+                }
+
+                const subCommand = interaction.options.getSubcommand();
+                if (!dbClient || !dbClient.db) {
+                     await interaction.editReply({ content: 'Database is not connected. Please inform the bot administrator.', flags: [MessageFlags.Ephemeral] });
+                     console.error(`[ERROR] /admin command failed: MongoDB client not available.`);
+                     return;
+                }
+                const db = dbClient.db('MineBotDB');
+
+                if (subCommand === 'revoke') {
+                    const targetUser = interaction.options.getUser('user');
+                    if (!targetUser) {
+                        await interaction.editReply({ content: 'Please specify a user to revoke access from.', flags: [MessageFlags.Ephemeral] });
+                        return;
+                    }
+                    const verifiedCollection = db.collection('verifiedUsers');
+                    await verifiedCollection.updateOne(
+                        { userId: ensureString(targetUser.id) },
+                        { $set: { isVerified: false, revokedAt: new Date(), revokedBy: userId } }
+                    );
+                    verifiedUsersCache.delete(ensureString(targetUser.id));
+                    await interaction.editReply({ content: `${ensureString(targetUser.tag)}'s access has been revoked.`, ephemeral: false });
+                } else if (subCommand === 'stats') {
+                    const gameResultsCollection = db.collection('gameResults');
+                    const totalSubmissions = await gameResultsCollection.countDocuments();
+                    const totalVerifiedUsers = await db.collection('verifiedUsers').countDocuments({ isVerified: true });
+
+                    await interaction.editReply({
+                        content: `**Bot Statistics:**\nTotal Game Submissions: ${totalSubmissions}\nTotal Verified Users: ${totalVerifiedUsers}`,
+                        ephemeral: false
+                    });
+                } else if (subCommand === 'unban') {
+                    const targetUser = interaction.options.getUser('user');
+                    if (!targetUser) {
+                        await interaction.editReply({ content: 'Please specify a user to unban.', flags: [MessageFlags.Ephemeral] });
+                        return;
+                    }
+                    const verifiedCollection = db.collection('verifiedUsers');
+                    await verifiedCollection.updateOne(
+                        { userId: ensureString(targetUser.id) },
+                        { $unset: { isBanned: "" }, $set: { lastUnbannedAt: new Date(), unbannedBy: userId } }
+                    );
+                    await interaction.editReply({ content: `${ensureString(targetUser.tag)} has been unbanned from submitting results.`, ephemeral: false });
+                }
+            }
+
+            // --- /emergency subcommand group logic ---
+            else if (commandName === 'emergency') {
+                if (!isAuthorizedAdmin(userId)) {
+                    await interaction.editReply({ content: 'You do not have permission to use emergency commands.', flags: [MessageFlags.Ephemeral] });
+                    return;
+                }
+
+                const subCommand = interaction.options.getSubcommand();
+                if (!dbClient || !dbClient.db) {
+                     await interaction.editReply({ content: 'Database is not connected. Please inform the bot administrator.', flags: [MessageFlags.Ephemeral] });
+                     console.error(`[ERROR] /emergency command failed: MongoDB client not available.`);
+                     return;
+                }
+
+                if (subCommand === 'verify') {
+                    const targetUser = interaction.options.getUser('user');
+                    if (!targetUser) {
+                        await interaction.editReply({ content: 'Please specify a user to force verify.', flags: [MessageFlags.Ephemeral] });
+                        return;
+                    }
+                    const db = dbClient.db('MineBotDB');
+                    const verifiedCollection = db.collection('verifiedUsers');
+                    await verifiedCollection.updateOne(
+                        { userId: ensureString(targetUser.id) },
+                        { $set: {
+                            userId: ensureString(targetUser.id),
+                            username: ensureString(targetUser.tag),
+                            isVerified: true,
+                            expiresAt: null,
+                            verifiedAt: new Date(),
+                            verifiedBy: userId,
+                            isEmergencyVerified: true
+                        }},
+                        { upsert: true }
+                    );
+                    verifiedUsersCache.set(ensureString(targetUser.id), { userId: ensureString(targetUser.id), isVerified: true, expiresAt: null });
+                    await interaction.editReply({ content: `${ensureString(targetUser.tag)} has been **force verified** (emergency).`, ephemeral: false });
+                }
+            }
+
+            // --- /how_to_submit_result Command Logic ---
+            else if (commandName === 'how_to_submit_result') {
+                const helpMessage = `
 **How to Submit a Game Result** 📝
 
 Why submit a result? Your submissions help train the prediction model, making it more accurate for everyone. ✨
@@ -480,142 +559,165 @@ Why submit a result? Your submissions help train the prediction model, making it
 
 **Remember to paste your exact data for best results!** 🎯
             `;
-            await interaction.reply({ content: helpMessage, flags: [MessageFlags.Ephemeral] });
-        }
-
-        // --- /leaderboard Command Logic ---
-        else if (commandName === 'leaderboard') {
-            const db = dbClient.db('MineBotDB');
-            const collection = db.collection('gameResults');
-            const leaderboard = await collection.aggregate([
-                { $group: { _id: "$userId", username: { $first: "$username" }, count: { $sum: 1 } } },
-                { $sort: { count: -1 } },
-                { $limit: 10 }
-            ]).toArray();
-
-            let leaderboardMessage = "**📊 Top Game Submitters:**\n";
-            if (leaderboard.length === 0) {
-                leaderboardMessage += "No submissions yet. Be the first!";
-            } else {
-                leaderboard.forEach((entry, index) => {
-                    leaderboardMessage += `${index + 1}. ${ensureString(entry.username)}: ${entry.count} submissions\n`;
-                });
-            }
-            await interaction.reply({ content: leaderboardMessage, ephemeral: false });
-        }
-
-        // --- /myresult Command Logic ---
-        else if (commandName === 'myresult') {
-            const db = dbClient.db('MineBotDB');
-            const collection = db.collection('gameResults');
-            const mySubmissions = await collection.countDocuments({ userId: userId });
-            await interaction.reply({ content: `You have submitted **${mySubmissions}** game results.`, flags: [MessageFlags.Ephemeral] });
-        }
-
-        // --- /submitresult Command Logic ---
-        else if (commandName === 'submitresult') {
-            const serverSeedHash = ensureString(interaction.options.getString('server_seed_hash'));
-            const clientSeed = ensureString(interaction.options.getString('client_seed'));
-            const nonce = interaction.options.getInteger('nonce');
-            const numMines = interaction.options.getInteger('num_mines');
-            const minePositionsString = ensureString(interaction.options.getString('mine_positions'));
-
-            const minePositions = minePositionsString.split(',').map(pos => parseInt(pos.trim(), 10));
-
-            if (minePositions.length !== numMines || minePositions.some(isNaN) || minePositions.some(pos => pos < 0 || pos > 24) || new Set(minePositions).size !== numMines) {
-                await interaction.reply({ content: '❌ Invalid mine positions provided. Please ensure it\'s a comma-separated list of unique numbers between 0-24, and the count matches the "num_mines" option.', flags: [MessageFlags.Ephemeral] });
-                return;
+                await interaction.editReply({ content: helpMessage, flags: [MessageFlags.Ephemeral] });
             }
 
-            const computedMines = calculateRollbetMines(serverSeedHash, clientSeed, nonce, numMines);
-            const sortedSubmittedMines = [...minePositions].sort((a, b) => a - b);
-            const sortedComputedMines = [...computedMines].sort((a, b) => a - b);
-
-            if (JSON.stringify(sortedSubmittedMines) === JSON.stringify(sortedComputedMines)) {
+            // --- /leaderboard Command Logic ---
+            else if (commandName === 'leaderboard') {
+                if (!dbClient || !dbClient.db) {
+                     await interaction.editReply({ content: 'Database is not connected. Please inform the bot administrator.', flags: [MessageFlags.Ephemeral] });
+                     console.error(`[ERROR] /leaderboard command failed: MongoDB client not available.`);
+                     return;
+                }
                 const db = dbClient.db('MineBotDB');
                 const collection = db.collection('gameResults');
+                const leaderboard = await collection.aggregate([
+                    { $group: { _id: "$userId", username: { $first: "$username" }, count: { $sum: 1 } } },
+                    { $sort: { count: -1 } },
+                    { $limit: 10 }
+                ]).toArray();
 
-                await collection.insertOne({
-                    userId: userId,
-                    username: userTag,
-                    serverSeedHash,
-                    clientSeed,
-                    nonce,
-                    numMines,
-                    minePositions: sortedSubmittedMines,
-                    submittedAt: new Date(),
-                    isValidated: true
-                });
-
-                await interaction.reply({ content: '✅ Your game result has been successfully submitted and validated! It will now contribute to our community data.', flags: [MessageFlags.Ephemeral] });
-            } else {
-                await interaction.reply({ content: '❌ Submitted mine positions do not match the computed game outcome or are invalid. Please double-check your input and ensure your algorithm for Rollbet\'s provably fair system is **exactly** correct if you are developing it.', flags: [MessageFlags.Ephemeral] });
-            }
-        }
-
-        // --- /predict Command Logic (with AI analysis) ---
-        else if (commandName === 'predict') {
-            const db = dbClient.db('MineBotDB');
-            const verifiedCollection = db.collection('verifiedUsers');
-            const gameResultsCollection = db.collection('gameResults');
-
-            const userVerification = await verifiedCollection.findOne({ userId: userId });
-
-            if (!userVerification || !userVerification.isVerified) {
-                await interaction.reply({ content: '🔒 You must be verified to use the \`/predict\` command. Please ask an admin to verify you, or share your game results via \`/submitresult\` to gain access!', flags: [MessageFlags.Ephemeral] });
-                return;
+                let leaderboardMessage = "**📊 Top Game Submitters:**\n";
+                if (leaderboard.length === 0) {
+                    leaderboardMessage += "No submissions yet. Be the first!";
+                } else {
+                    leaderboard.forEach((entry, index) => {
+                        leaderboardMessage += `${index + 1}. ${ensureString(entry.username)}: ${entry.count} submissions\n`;
+                    });
+                }
+                await interaction.editReply({ content: leaderboardMessage, ephemeral: false });
             }
 
-            if (userVerification.expiresAt && userVerification.expiresAt < new Date()) {
-                await verifiedCollection.updateOne(
-                    { userId: userId },
-                    { $set: { isVerified: false, expiredAt: new Date() } }
-                );
+            // --- /myresult Command Logic ---
+            else if (commandName === 'myresult') {
+                if (!dbClient || !dbClient.db) {
+                     await interaction.editReply({ content: 'Database is not connected. Please inform the bot administrator.', flags: [MessageFlags.Ephemeral] });
+                     console.error(`[ERROR] /myresult command failed: MongoDB client not available.`);
+                     return;
+                }
+                const db = dbClient.db('MineBotDB');
+                const collection = db.collection('gameResults');
+                const mySubmissions = await collection.countDocuments({ userId: userId });
+                await interaction.editReply({ content: `You have submitted **${mySubmissions}** game results.`, flags: [MessageFlags.Ephemeral] });
+            }
 
-                verifiedUsersCache.delete(userId);
+            // --- /submitresult Command Logic ---
+            else if (commandName === 'submitresult') {
+                const serverSeedHash = ensureString(interaction.options.getString('server_seed_hash'));
+                const clientSeed = ensureString(interaction.options.getString('client_seed'));
+                const nonce = interaction.options.getInteger('nonce');
+                const numMines = interaction.options.getInteger('num_mines');
+                const minePositionsString = ensureString(interaction.options.getString('mine_positions'));
 
-                try {
-                    await interaction.user.send(getAccessExpiredDM(userTag));
-                    console.log(`Sent access expired DM to ${userTag}`);
-                } catch (dmError) {
-                    console.error(`Could not send access expired DM to ${ensureString(dmError.recipient?.tag || 'unknown user')}. Error: ${ensureString(dmError.message)}. They might have DMs disabled.`, dmError);
+                const minePositions = minePositionsString.split(',').map(pos => parseInt(pos.trim(), 10));
+
+                if (minePositions.length !== numMines || minePositions.some(isNaN) || minePositions.some(pos => pos < 0 || pos > 24) || new Set(minePositions).size !== numMines) {
+                    await interaction.editReply({ content: '❌ Invalid mine positions provided. Please ensure it\'s a comma-separated list of unique numbers between 0-24, and the count matches the "num_mines" option.', flags: [MessageFlags.Ephemeral] });
+                    return;
                 }
 
-                await interaction.reply({ content: 'Expired! ⏳ Your data analysis access has expired. Please check your DMs for more information. Ask an admin to re-verify you or submit more results via \`/submitresult\` for free access!', flags: [MessageFlags.Ephemeral] });
-                return;
+                const computedMines = calculateRollbetMines(serverSeedHash, clientSeed, nonce, numMines);
+                const sortedSubmittedMines = [...minePositions].sort((a, b) => a - b);
+                const sortedComputedMines = [...computedMines].sort((a, b) => a - b);
+
+                if (JSON.stringify(sortedSubmittedMines) === JSON.stringify(sortedComputedMines)) {
+                    if (!dbClient || !dbClient.db) {
+                         await interaction.editReply({ content: 'Database is not connected. Please inform the bot administrator.', flags: [MessageFlags.Ephemeral] });
+                         console.error(`[ERROR] /submitresult command failed: MongoDB client not available.`);
+                         return;
+                    }
+                    const db = dbClient.db('MineBotDB');
+                    const collection = db.collection('gameResults');
+
+                    await collection.insertOne({
+                        userId: userId,
+                        username: userTag,
+                        serverSeedHash,
+                        clientSeed,
+                        nonce,
+                        numMines,
+                        minePositions: sortedSubmittedMines,
+                        submittedAt: new Date(),
+                        isValidated: true
+                    });
+
+                    await interaction.editReply({ content: '✅ Your game result has been successfully submitted and validated! It will now contribute to our community data.', flags: [MessageFlags.Ephemeral] });
+                } else {
+                    await interaction.editReply({ content: '❌ Submitted mine positions do not match the computed game outcome or are invalid. Please double-check your input and ensure your algorithm for Rollbet\'s provably fair system is **exactly** correct if you are developing it.', flags: [MessageFlags.Ephemeral] });
+                }
             }
 
-            await interaction.deferReply();
+            // --- /predict Command Logic (with AI analysis) ---
+            else if (commandName === 'predict') {
+                if (!dbClient || !dbClient.db) {
+                     await interaction.editReply({ content: 'Database is not connected. Please inform the bot administrator.', flags: [MessageFlags.Ephemeral] });
+                     console.error(`[ERROR] /predict command failed: MongoDB client not available.`);
+                     return;
+                }
+                const db = dbClient.db('MineBotDB');
+                const verifiedCollection = db.collection('verifiedUsers');
+                const gameResultsCollection = db.collection('gameResults');
 
-            const recentGameResults = await gameResultsCollection.find({})
-                                                         .sort({ submittedAt: -1 })
-                                                         .limit(50)
-                                                         .toArray();
+                const userVerification = await verifiedCollection.findOne({ userId: userId });
 
-            if (recentGameResults.length === 0) {
-                await interaction.editReply({ content: 'No game results submitted yet for analysis. Please encourage users to use `/submitresult`!', ephemeral: false });
-                return;
+                if (!userVerification || !userVerification.isVerified) {
+                    await interaction.editReply({ content: '🔒 You must be verified to use the \`/predict\` command. Please ask an admin to verify you, or share your game results via \`/submitresult\` to gain access!', flags: [MessageFlags.Ephemeral] });
+                    return;
+                }
+
+                if (userVerification.expiresAt && userVerification.expiresAt < new Date()) {
+                    await verifiedCollection.updateOne(
+                        { userId: userId },
+                        { $set: { isVerified: false, expiredAt: new Date() } }
+                    );
+
+                    verifiedUsersCache.delete(userId);
+
+                    try {
+                        await interaction.user.send(getAccessExpiredDM(userTag));
+                        console.log(`Sent access expired DM to ${userTag}`);
+                    } catch (dmError) {
+                        console.error(`Could not send access expired DM to ${ensureString(dmError.recipient?.tag || 'unknown user')}. Error: ${ensureString(dmError.message)}. They might have DMs disabled.`, dmError);
+                    }
+
+                    await interaction.editReply({ content: 'Expired! ⏳ Your data analysis access has expired. Please check your DMs for more information. Ask an admin to re-verify you or submit more results via \`/submitresult\` for free access!', flags: [MessageFlags.Ephemeral] });
+                    return;
+                }
+
+                // Removed deferReply from here as it's now at the very top of interactionCreate
+
+                const recentGameResults = await gameResultsCollection.find({})
+                                                             .sort({ submittedAt: -1 })
+                                                             .limit(50)
+                                                             .toArray();
+
+                if (recentGameResults.length === 0) {
+                    await interaction.editReply({ content: 'No game results submitted yet for analysis. Please encourage users to use `/submitresult`!', ephemeral: false });
+                    return;
+                }
+
+                let dataSummary = `Recent validated Rollbet Mines game results:\n`;
+                recentGameResults.forEach((game, index) => {
+                    dataSummary += `Game ${index + 1}: Mines: ${ensureString(game.numMines)}, Positions: [${ensureString(game.minePositions.join(', '))}], Nonce: ${ensureString(game.nonce)}\n`;
+                });
+                dataSummary += `\nBased on this data, provide an analysis of observed patterns or interesting insights regarding mine distribution, game frequencies, or any statistical anomalies. Remind the user this is for data analysis and does not predict future random outcomes.`;
+
+                const aiAnalysis = await callGeminiAPI(dataSummary);
+
+                await interaction.editReply({ content: `**🤖 AI Data Analysis from Latest Submissions:**\n\n${aiAnalysis}`, ephemeral: false });
             }
-
-            let dataSummary = `Recent validated Rollbet Mines game results:\n`;
-            recentGameResults.forEach((game, index) => {
-                dataSummary += `Game ${index + 1}: Mines: ${ensureString(game.numMines)}, Positions: [${ensureString(game.minePositions.join(', '))}], Nonce: ${ensureString(game.nonce)}\n`;
-            });
-            dataSummary += `\nBased on this data, provide an analysis of observed patterns or interesting insights regarding mine distribution, game frequencies, or any statistical anomalies. Remind the user this is for data analysis and does not predict future random outcomes.`;
-
-            const aiAnalysis = await callGeminiAPI(dataSummary);
-
-            await interaction.editReply({ content: `**🤖 AI Data Analysis from Latest Submissions:**\n\n${aiAnalysis}`, ephemeral: false });
+        } catch (error) {
+            console.error(`[ERROR] Error handling command '${commandName}' for user ${userTag} (${userId}):`, ensureString(error.message), error);
+            // This fallback reply is critical if an error occurs *after* deferring.
+            if (interaction.deferred || interaction.replied) {
+                await interaction.editReply({ content: 'An unexpected error occurred while processing your command. Please try again later.', flags: [MessageFlags.Ephemeral] }).catch(err => console.error(`[ERROR] Failed to send error editReply: ${ensureString(err.message)}`, err));
+            } else {
+                await interaction.reply({ content: 'An unexpected error occurred. Please try again later.', flags: [MessageFlags.Ephemeral] }).catch(err => console.error(`[ERROR] Failed to send error reply: ${ensureString(err.message)}`, err));
+            }
         }
-    } catch (error) {
-        console.error(`Error handling command '${commandName}' for user ${userTag} (${userId}):`, error.message);
-        if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({ content: 'An unexpected error occurred while processing your command. Please try again later.', flags: [MessageFlags.Ephemeral] });
-        } else {
-            await interaction.editReply({ content: 'An unexpected error occurred while processing your command. Please try again later.', flags: [MessageFlags.Ephemeral] });
-        }
-    }
-});
+    });
+
+})(); // End of Main Execution Logic IIFE
 
 // --- Slash Command Registration (Run this section ONCE manually or in a separate deploy script) ---
 /*
@@ -776,7 +878,7 @@ const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
 
         console.log('Successfully reloaded application (/) commands.');
     } catch (error) {
-        console.error('Failed to register slash commands:', error.message);
+        console.error('Failed to register slash commands:', ensureString(error.message));
     }
 })();
 */
