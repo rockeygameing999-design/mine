@@ -1,9 +1,9 @@
 // Required Discord.js and MongoDB modules
-const { Client, GatewayIntentBits, Partials, PermissionFlagsBits } = require('discord.js');
-const { MongoClient } = require('mongodb');
-const { REST, Routes } = require('discord.js'); // For registering slash commands
+import { Client, GatewayIntentBits, Partials, PermissionFlagsBits } from 'discord.js';
+import { MongoClient } from 'mongodb';
+import { REST, Routes } from 'discord.js'; // For registering slash commands
 // You might need a crypto library if your provably fair function uses SHA256 or similar
-// const crypto = require('crypto'); // Uncomment if needed for provably fair calculation
+// import crypto from 'crypto'; // Uncomment if needed for provably fair calculation
 
 // --- ADMIN CONFIGURATION ---
 // ONLY these Discord User IDs will have access to /admin, /emergency, and /verify commands.
