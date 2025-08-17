@@ -1,5 +1,5 @@
 // Required Discord.js and MongoDB modules
-import { Client, GatewayIntentBits, Partials, PermissionFlagsBits } from 'discord.js';
+import { Client, GatewayIntentBits, Partials, PermissionFlagsBits, MessageFlags } from 'discord.js'; // Added MessageFlags
 import { MongoClient } from 'mongodb';
 import { REST, Routes } from 'discord.js'; // For registering slash commands
 // You will likely need Node.js's built-in 'crypto' module for provably fair calculations.
@@ -300,7 +300,7 @@ client.on('interactionCreate', async interaction => {
     if (commandName === 'verify') {
         // Check if the command issuer is one of the authorized admins
         if (!isAuthorizedAdmin(interaction.user.id)) {
-            await interaction.reply({ content: 'You do not have permission to use this command. Only designated administrators can verify users.', ephemeral: true });
+            await interaction.reply({ content: 'You do not have permission to use this command. Only designated administrators can verify users.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
             return;
         }
 
@@ -310,7 +310,7 @@ client.on('interactionCreate', async interaction => {
         const member = interaction.guild.members.cache.get(targetUser.id);
 
         if (!member) {
-            await interaction.reply({ content: 'Could not find that user in this server. Please ensure the ID is correct or the user is in the server.', ephemeral: true });
+            await interaction.reply({ content: 'Could not find that user in this server. Please ensure the ID is correct or the user is in the server.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
             return;
         }
 
@@ -323,7 +323,7 @@ client.on('interactionCreate', async interaction => {
                 expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000); // Calculate expiration date
                 durationTextForDM = `Access for ${days} Days (until ${expiresAt.toLocaleDateString()})`;
             } else {
-                await interaction.reply({ content: 'Invalid duration specified. Please use "permanent", "7d", "30d", "90d", or "365d".', ephemeral: true });
+                await interaction.reply({ content: 'Invalid duration specified. Please use "permanent", "7d", "30d", "90d", or "365d".', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
                 return;
             }
         }
@@ -357,12 +357,12 @@ client.on('interactionCreate', async interaction => {
                 console.log(`Sent verification successful DM to ${member.user.tag}`);
             } catch (dmError) {
                 console.error(`Could not send verification successful DM to ${member.user.tag}. They might have DMs disabled.`, dmError);
-                await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${member.user.tag} with important information, but their DMs might be disabled.)`, ephemeral: false });
+                await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${member.user.tag} with important information, but their DMs might be disabled.)`, ephemeral: false }); // Kept ephemeral true here if followUp is still desired to be ephemeral
             }
 
         } catch (error) {
             console.error('Error during verification:', error.message);
-            await interaction.reply({ content: 'An error occurred during verification. Please try again or contact an admin.', ephemeral: true });
+            await interaction.reply({ content: 'An error occurred during verification. Please try again or contact an admin.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
         }
     }
 
@@ -370,7 +370,7 @@ client.on('interactionCreate', async interaction => {
     if (commandName === 'admin') {
         // Check if the command issuer is one of the authorized admins
         if (!isAuthorizedAdmin(interaction.user.id)) {
-            await interaction.reply({ content: 'You do not have permission to use admin commands.', ephemeral: true });
+            await interaction.reply({ content: 'You do not have permission to use admin commands.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
             return;
         }
 
@@ -383,16 +383,16 @@ client.on('interactionCreate', async interaction => {
             // const db = clientDB.db('MineBotDB');
             // await db.collection('verifiedUsers').updateOne({ userId: userToRevoke.id }, { $set: { isVerified: false, expiresAt: new Date() } });
             // verifiedUsersCache.delete(userToRevoke.id); // Remove from cache
-            await interaction.reply({ content: 'Admin: User access revoked (placeholder).', ephemeral: true });
+            await interaction.reply({ content: 'Admin: User access revoked (placeholder).', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
         } else if (subCommand === 'stats') {
             // PASTE YOUR EXISTING LOGIC FOR /ADMIN STATS HERE
             // This should display bot statistics (e.g., number of verified users, total submissions)
-            await interaction.reply({ content: 'Admin: Bot stats displayed (placeholder).', ephemeral: true });
+            await interaction.reply({ content: 'Admin: Bot stats displayed (placeholder).', ephemeral: false });
         } else if (subCommand === 'unban') {
             // PASTE YOUR EXISTING LOGIC FOR /ADMIN UNBAN HERE
             // This should unban a user from submitting results (if you have a separate ban system)
             // Example: const userToUnban = interaction.options.getUser('user');
-            await interaction.reply({ content: 'Admin: User unbanned from submitting results (placeholder).', ephemeral: true });
+            await interaction.reply({ content: 'Admin: User unbanned from submitting results (placeholder).', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
         }
     }
 
@@ -400,7 +400,7 @@ client.on('interactionCreate', async interaction => {
     if (commandName === 'emergency') {
         // Check if the command issuer is one of the authorized admins
         if (!isAuthorizedAdmin(interaction.user.id)) {
-            await interaction.reply({ content: 'You do not have permission to use emergency commands.', ephemeral: true });
+            await interaction.reply({ content: 'You do not have permission to use emergency commands.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
             return;
         }
 
@@ -410,7 +410,7 @@ client.on('interactionCreate', async interaction => {
             // PASTE YOUR EXISTING LOGIC FOR /EMERGENCY VERIFY HERE
             // This would likely involve similar logic to /verify, but might bypass some strict checks
             // Example: const userToForceVerify = interaction.options.getUser('user');
-            await interaction.reply({ content: 'Emergency: User force verified (placeholder).', ephemeral: true });
+            await interaction.reply({ content: 'Emergency: User force verified (placeholder).', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
         }
     }
 
@@ -434,7 +434,7 @@ Why submit a result? Your submissions help train the prediction model, making it
 
 **Remember to paste your exact data for best results!** 🎯
         `;
-        await interaction.reply({ content: helpMessage, ephemeral: true }); // Ephemeral so only the user sees it
+        await interaction.reply({ content: helpMessage, flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
     }
 
     // --- /leaderboard Command Logic ---
@@ -448,7 +448,7 @@ Why submit a result? Your submissions help train the prediction model, making it
     if (commandName === 'myresult') {
         // PASTE YOUR EXISTING LOGIC FOR /MYRESULT HERE
         // Logic to show how many results the user has submitted
-        await interaction.reply({ content: 'My Results: Your submission count displayed (placeholder).', ephemeral: true });
+        await interaction.reply({ content: 'My Results: Your submission count displayed (placeholder).', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
     }
 
     // --- /submitresult Command Logic ---
@@ -463,7 +463,7 @@ Why submit a result? Your submissions help train the prediction model, making it
 
         // Basic validation for mine positions input
         if (minePositions.length !== numMines || minePositions.some(isNaN) || minePositions.some(pos => pos < 0 || pos > 24) || new Set(minePositions).size !== numMines) {
-            await interaction.reply({ content: '❌ Invalid mine positions provided. Please ensure it\'s a comma-separated list of unique numbers between 0-24, and the count matches the "num_mines" option.', ephemeral: true });
+            await interaction.reply({ content: '❌ Invalid mine positions provided. Please ensure it\'s a comma-separated list of unique numbers between 0-24, and the count matches the "num_mines" option.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
             return;
         }
 
@@ -499,14 +499,14 @@ Why submit a result? Your submissions help train the prediction model, making it
                     isValidated: true // Mark as valid
                 });
 
-                await interaction.reply({ content: '✅ Your game result has been successfully submitted and validated! It will now contribute to our community data.', ephemeral: true });
+                await interaction.reply({ content: '✅ Your game result has been successfully submitted and validated! It will now contribute to our community data.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
             } else {
                 // Mines do NOT match - reject the submission
-                await interaction.reply({ content: '❌ Submitted mine positions do not match the computed game outcome or are invalid. Please double-check your input and ensure your algorithm for Rollbet\'s provably fair system is **exactly** correct if you are developing it.', ephemeral: true });
+                await interaction.reply({ content: '❌ Submitted mine positions do not match the computed game outcome or are invalid. Please double-check your input and ensure your algorithm for Rollbet\'s provably fair system is **exactly** correct if you are developing it.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
             }
         } catch (error) {
             console.error('Error in /submitresult validation or storage:', error.message);
-            await interaction.reply({ content: 'An unexpected error occurred while processing your submission. Please try again or contact an admin.', ephemeral: true });
+            await interaction.reply({ content: 'An unexpected error occurred while processing your submission. Please try again or contact an admin.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
         }
     }
 
@@ -521,7 +521,7 @@ Why submit a result? Your submissions help train the prediction model, making it
             const userVerification = await verifiedCollection.findOne({ userId: userId });
 
             if (!userVerification || !userVerification.isVerified) {
-                await interaction.reply({ content: '🔒 You must be verified to use the \`/predict\` command. Please ask an admin to verify you, or share your game results via \`/submitresult\` to gain access!', ephemeral: true });
+                await interaction.reply({ content: '🔒 You must be verified to use the \`/predict\` command. Please ask an admin to verify you, or share your game results via \`/submitresult\` to gain access!', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
                 return;
             }
 
@@ -541,7 +541,7 @@ Why submit a result? Your submissions help train the prediction model, making it
                     console.error(`Could not send access expired DM to ${interaction.user.tag}. They might have DMs disabled.`, dmError);
                 }
 
-                await interaction.reply({ content: 'Expired! ⏳ Your data analysis access has expired. Please check your DMs for more information. Ask an admin to re-verify you or submit more results via \`/submitresult\` for free access!', ephemeral: true });
+                await interaction.reply({ content: 'Expired! ⏳ Your data analysis access has expired. Please check your DMs for more information. Ask an admin to re-verify you or submit more results via \`/submitresult\` for free access!', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
                 return;
             }
 
@@ -556,6 +556,7 @@ Why submit a result? Your submissions help train the prediction model, making it
                                                          .toArray();
 
             if (recentGameResults.length === 0) {
+                // If deferred, use editReply
                 await interaction.editReply({ content: 'No game results submitted yet for analysis. Please encourage users to use `/submitresult`!', ephemeral: false });
                 return;
             }
@@ -573,7 +574,8 @@ Why submit a result? Your submissions help train the prediction model, making it
 
         } catch (error) {
             console.error('Error in /predict or AI analysis:', error.message);
-            await interaction.followUp({ content: 'An error occurred while trying to generate AI analysis. Please try again later.', ephemeral: true });
+            // Since interaction was deferred, use editReply in catch block too
+            await interaction.editReply({ content: 'An error occurred while trying to generate AI analysis. Please try again later.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
         }
     }
 });
