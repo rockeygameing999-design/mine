@@ -306,6 +306,8 @@ client.on('interactionCreate', async interaction => {
 
         // Fix: Ensure targetUser is always a valid User object by defaulting to interaction.user
         const targetUser = interaction.options.getUser('user') || interaction.user; // Get the user to verify from the option or default to the command invoker
+        console.log('targetUser in /verify:', targetUser); // Added for debugging
+
         const durationOption = interaction.options.getString('duration'); // Get duration: 'permanent', '7d', etc.
 
         const member = interaction.guild.members.cache.get(targetUser.id);
@@ -602,7 +604,7 @@ const commands = [
                 name: 'user',
                 type: 6, // USER type
                 description: 'The user (by ID or mention) to verify.',
-                required: true,
+                required: true, // This should ensure 'user' is always provided by Discord
             },
             {
                 name: 'duration',
