@@ -2,8 +2,8 @@
 import { Client, GatewayIntentBits, Partials, PermissionFlagsBits } from 'discord.js';
 import { MongoClient } from 'mongodb';
 import { REST, Routes } from 'discord.js'; // For registering slash commands
-// You might need a crypto library if your provably fair function uses SHA256 or similar
-// import crypto from 'crypto'; // Uncomment if needed for provably fair calculation
+// You will likely need Node.js's built-in 'crypto' module for provably fair calculations.
+import crypto from 'crypto'; // Uncomment this line if you use crypto for your algorithm!
 
 // --- ADMIN CONFIGURATION ---
 // ONLY these Discord User IDs will have access to /admin, /emergency, and /verify commands.
@@ -20,45 +20,62 @@ function isAuthorizedAdmin(userId) {
 // --- PROVABLY FAIR ALGORITHM IMPLEMENTATION (CRITICAL: YOU MUST FILL THIS IN ACCURATELY) ---
 /**
  * Calculates the provably fair mine positions for a Rollbet game.
- * YOU MUST IMPLEMENT THIS FUNCTION ACCURATELY BASED ON ROLLBET'S PUBLICLY DOCUMENTED ALGORITHM.
- * Without this, /submitresult validation will always fail.
  *
- * @param {string} serverSeedHash The server seed hash.
+ * IMPORTANT: YOU MUST IMPLEMENT THIS FUNCTION ACCURATELY BASED ON ROLLBET'S PUBLICLY DOCUMENTED ALGORITHM.
+ * This is the most critical part for '/submitresult' validation.
+ *
+ * Steps typically involved:
+ * 1. Combining the server seed (often unhashed, revealed after game), client seed, and nonce.
+ * 2. Applying a cryptographic hash function (e.g., SHA256, HMAC-SHA256) to this combined string.
+ * (You'll need `import crypto from 'crypto';` for this).
+ * 3. Using the resulting hash to derive a sequence of pseudo-random numbers.
+ * 4. Mapping these random numbers to select 'numMines' unique positions on the 0-24 grid.
+ *
+ * Without Rollbet's exact algorithm, '/submitresult' will always fail validation.
+ *
+ * @param {string} serverSeed The server seed (usually the unhashed one provided by the casino for verification).
  * @param {string} clientSeed The client seed.
  * @param {number} nonce The game nonce.
  * @param {number} numMines The number of mines for the game.
  * @returns {number[]} An array of mine positions (0-24) sorted in ascending order.
  */
-function calculateRollbetMines(serverSeedHash, clientSeed, nonce, numMines) {
-    // This is a placeholder. You need to replace this with Rollbet's actual algorithm.
-    // Example structure (conceptual, not actual Rollbet logic):
+function calculateRollbetMines(serverSeed, clientSeed, nonce, numMines) {
+    // --- THIS IS A PLACEHOLDER. REPLACE WITH ROLLBET'S REAL ALGORITHM. ---
+    // Example conceptual code (NOT Rollbet's actual logic):
     /*
-    const combinedSeed = `${serverSeedHash}-${clientSeed}-${nonce}`;
-    const hash = crypto.createHash('sha256').update(combinedSeed).digest('hex');
+    const combinedString = `${serverSeed}-${clientSeed}-${nonce}`;
+    const hash = crypto.createHash('sha256').update(combinedString).digest('hex');
 
-    const minePositions = [];
-    const availablePositions = Array.from({ length: 25 }, (_, i) => i); // 0 to 24
-
-    // This part is highly specific to the algorithm. It usually involves deriving
-    // random numbers from the hash and selecting unique positions.
-    for (let i = 0; i < numMines; i++) {
-        // Example: Use parts of the hash to pick a random index from availablePositions
-        // This is a simplified example; actual algorithm will be more complex.
-        const randomIndex = parseInt(hash.substring(i * 2, i * 2 + 2), 16) % availablePositions.length;
-        const selectedPosition = availablePositions.splice(randomIndex, 1)[0];
-        minePositions.push(selectedPosition);
+    // Simplified pseudo-random number generation from hash
+    let seedValue = parseInt(hash.substring(0, 16), 16); // Use a portion of the hash as initial seed
+    const pseudoRandomNumbers = [];
+    for (let i = 0; i < 25; i++) { // Generate enough random numbers for all positions
+        seedValue = (seedValue * 9301 + 49297) % 233280; // Simple LCG
+        pseudoRandomNumbers.push(seedValue / 233280);
     }
+
+    const availablePositions = Array.from({ length: 25 }, (_, i) => i);
+    const minePositions = [];
+
+    // Select unique mines based on pseudo-random numbers
+    for (let i = 0; i < numMines; i++) {
+        const randomValue = pseudoRandomNumbers[i % pseudoRandomNumbers.length]; // Cycle through generated numbers
+        const randomIndex = Math.floor(randomValue * availablePositions.length);
+        minePositions.push(availablePositions.splice(randomIndex, 1)[0]);
+    }
+
     return minePositions.sort((a, b) => a - b);
     */
 
-    // --- Current Placeholder Implementation ---
-    // If you run the bot without implementing the real algorithm,
-    // this placeholder will always cause a mismatch unless the input happens to be [1, 5, 10].
+    // --- Current Placeholder Implementation (will likely cause mismatches) ---
     console.warn("WARNING: calculateRollbetMines is using a placeholder. Please implement Rollbet's actual provably fair algorithm.");
-    if (numMines === 3 && clientSeed.startsWith('test')) { // Example for testing
+    // This fixed array will only match if the actual game output *happens* to be these mines.
+    // If you're testing, you can modify this temporarily to match a known game result from Rollbet
+    // just to see the "success" message, but then you MUST implement the real algorithm.
+    if (numMines === 3 && clientSeed.startsWith('test')) { // A very specific test case placeholder
         return [1, 5, 10];
     }
-    return []; // Return empty or a fixed array for validation to fail consistently if not implemented
+    return []; // Default to an empty array to consistently fail if not properly implemented
 }
 
 
@@ -194,7 +211,7 @@ Hello {USERNAME}, welcome to the community!
 > **Check your contributions with /myresults and compete on the /leaderboard!**
 
 # 🌟 Transparency & Fairness:
-> **We use Rollbet’s provably fair system (server seed, nonce) to ensure all game outcomes are verifiable. All submissions are analyzed to enhance our data, and you can verify results yourself. Verified access grants exclusive data analysis access.**
+> **We use Rollbet’s provably fair system (server seed, nonce) to ensure all game outcomes are verifiable. All submissions are analyzed to enhance our data, and you can really see the fairness for yourself.**
 
 # 🎁 FREE ACCESS
 > **Share your mines result to us by using /submitresult and win free access**
@@ -453,6 +470,12 @@ Why submit a result? Your submissions help train the prediction model, making it
         try {
             // --- CRITICAL VALIDATION STEP ---
             // This calls YOUR implementation of Rollbet's algorithm.
+            // Note: If Rollbet requires the UNHASHED server seed for verification,
+            // the user would need to provide that after the game, or you'd need
+            // to fetch it (if Rollbet provides an API for that).
+            // For now, assuming `serverSeedHash` is used directly in `calculateRollbetMines`
+            // as the 'serverSeed' parameter, or that you're adapting your logic
+            // to handle the hashed seed if that's what's available client-side.
             const computedMines = calculateRollbetMines(serverSeedHash, clientSeed, nonce, numMines);
 
             // Sort both arrays to ensure order doesn't affect comparison
