@@ -25,7 +25,7 @@ const MONGO_URI = process.env.MONGO_URI;
 // Discord Bot Token should be set as an environment variable in Render.
 const BOT_TOKEN = process.env.BOT_TOKEN;
 
-// --- Helper Functions ---
+// --- Helper Functions (Moved to top for proper scope) ---
 
 /**
  * Checks if a given Discord user ID is an authorized administrator.
@@ -83,6 +83,26 @@ async function fetchWithRetry(url, options, maxRetries = 3, baseDelay = 1000) {
         }
     }
     throw new Error('Max retries reached. Failed to fetch.');
+}
+
+/**
+ * Handles self-pinging the bot's own URL to keep it awake on Render.
+ */
+async function startSelfPing() {
+    if (!SELF_PING_URL) {
+        console.warn('SELF_PING_URL is not set. Self-pinging will not occur.');
+        return;
+    }
+    try {
+        const response = await fetch(SELF_PING_URL);
+        if (response.ok) {
+            console.log(`Self-ping successful to ${SELF_PING_URL}`);
+        } else {
+            console.warn(`Self-ping failed to ${SELF_PING_URL} with status: ${response.status}`);
+        }
+    } catch (error) {
+        console.error(`Error during self-ping to ${SELF_PING_URL}:`, error.message);
+    }
 }
 
 // --- Provably Fair Algorithm Implementation (CRITICAL: YOU MUST FILL THIS IN ACCURATELY) ---
