@@ -17,6 +17,15 @@ function isAuthorizedAdmin(userId) {
     return ADMIN_USER_IDS.includes(userId);
 }
 
+// --- DEFENSIVE STRING HANDLING (NEW) ---
+// Ensures a value is a string, preventing 'Cannot read properties of null (reading 'replace')'
+function ensureString(value) {
+    if (value === null || value === undefined) {
+        return 'unknown'; // Default value for null/undefined
+    }
+    return String(value); // Convert to string
+}
+
 // --- SELF-PING SYSTEM CONFIGURATION ---
 // IMPORTANT: Render's free tier services spin down after 15 minutes of inactivity.
 // This self-ping helps keep the service awake. However, it consumes your monthly free instance hours.
@@ -231,6 +240,7 @@ app.listen(PORT, () => {
 
 
 // --- GLOBAL MESSAGE CONTENT CONSTANTS ---
+// Ensured all interpolations use ensureString for robustness
 const welcomeAndWarningMessage = `
 Hello {USERNAME}, welcome to the community!
 
@@ -260,13 +270,13 @@ Please make sure to read and follow these rules. Enjoy your time here!
 const verificationSuccessfulDM = (username, durationText) => `
 **Verification Successful!** 🎉
 
-Hello ${username}, you have been granted access to the mine prediction service!
+Hello ${ensureString(username)}, you have been granted access to the mine prediction service!
 
 🎯 **Access Granted**
 You can now use the \`/predict\` command to analyze mine patterns.
 
 ⏰ **Access Duration**
-${durationText}
+${ensureString(durationText)}
 
 ---
 
@@ -284,7 +294,7 @@ Professional Mine Prediction Service •
 const accessExpiredDM = (username) => `
 **Access Expired!** 😔
 
-Hello ${username}, your access to the mine data analysis service has expired.
+Hello ${ensureString(username)}, your access to the mine data analysis service has expired.
 
 🚫 **Access Revoked**
 You can no longer use the \`/predict\` command.
@@ -300,11 +310,8 @@ client.on('ready', async () => {
     await loadInitialVerifiedUsersCache();
 
     // --- Start Self-Ping System when bot is ready ---
-    // This will send a request to the bot's own URL to keep it awake on Render's free tier.
-    // Ensure SELF_PING_URL is correctly configured at the top of the file.
     if (SELF_PING_URL) {
         console.log(`Starting self-ping system. Pinging ${SELF_PING_URL} every ${PING_INTERVAL_MS / 1000 / 60} minutes.`);
-        // Call immediately on start, then set interval
         startSelfPing();
         setInterval(startSelfPing, PING_INTERVAL_MS);
     } else {
@@ -314,13 +321,13 @@ client.on('ready', async () => {
 
 // --- New: Guild Member Add Event (Welcome DM on Server Join) ---
 client.on('guildMemberAdd', async member => {
-    console.log(`New member joined: ${member.user.tag} (${member.id})`);
+    console.log(`New member joined: ${ensureString(member.user.tag)} (${ensureString(member.id)})`);
     try {
-        const personalizedWelcomeMessage = welcomeAndWarningMessage.replace('{USERNAME}', member.user.username);
+        const personalizedWelcomeMessage = welcomeAndWarningMessage.replace('{USERNAME}', ensureString(member.user.username));
         await member.send(personalizedWelcomeMessage);
-        console.log(`Sent welcome DM to new member: ${member.user.tag}`);
+        console.log(`Sent welcome DM to new member: ${ensureString(member.user.tag)}`);
     } catch (error) {
-        console.error(`Could not send welcome DM to ${member.user.tag}. They might have DMs disabled.`, error);
+        console.error(`Could not send welcome DM to ${ensureString(member.user.tag)}. Error: ${ensureString(error.message)}. They might have DMs disabled.`, error);
     }
 });
 
@@ -332,18 +339,18 @@ client.on('interactionCreate', async interaction => {
 
     // --- /verify Command Logic (Admin only, verifies by user ID, with duration) ---
     if (commandName === 'verify') {
-        if (!isAuthorizedAdmin(interaction.user.id)) {
+        if (!isAuthorizedAdmin(ensureString(interaction.user.id))) {
             await interaction.reply({ content: 'You do not have permission to use this command. Only designated administrators can verify users.', flags: [MessageFlags.Ephemeral] });
             return;
         }
 
         const targetUser = interaction.options.getUser('user') || interaction.user;
-        console.log(`[DEBUG /verify] targetUser: ${targetUser ? targetUser.tag : 'null/undefined'} (ID: ${targetUser ? targetUser.id : 'N/A'})`);
+        console.log(`[DEBUG /verify] targetUser: ${ensureString(targetUser ? targetUser.tag : 'null/undefined')} (ID: ${ensureString(targetUser ? targetUser.id : 'N/A')})`);
 
         const durationOption = interaction.options.getString('duration');
 
-        const member = interaction.guild.members.cache.get(targetUser.id);
-        console.log(`[DEBUG /verify] member from cache: ${member ? member.user.tag : 'null/undefined'} (ID: ${member ? member.id : 'N/A'})`);
+        const member = interaction.guild.members.cache.get(ensureString(targetUser.id)); // ensure targetUser.id is a string
+        console.log(`[DEBUG /verify] member from cache: ${ensureString(member ? member.user.tag : 'null/undefined')} (ID: ${ensureString(member ? member.id : 'N/A')})`);
 
         if (!member) {
             await interaction.reply({ content: 'Could not find that user in this server. Please ensure the ID is correct or the user is in the server.', flags: [MessageFlags.Ephemeral] });
@@ -369,40 +376,40 @@ client.on('interactionCreate', async interaction => {
             const collection = db.collection('verifiedUsers');
 
             await collection.updateOne(
-                { userId: member.id },
+                { userId: ensureString(member.id) }, // Ensure ID is string
                 { $set: {
-                    userId: member.id,
-                    username: member.user.tag,
+                    userId: ensureString(member.id),
+                    username: ensureString(member.user.tag),
                     isVerified: true,
                     expiresAt: expiresAt,
                     verifiedAt: new Date(),
-                    verifiedBy: interaction.user.id
+                    verifiedBy: ensureString(interaction.user.id)
                 }},
                 { upsert: true }
             );
 
-            verifiedUsersCache.set(member.id, { userId: member.id, isVerified: true, expiresAt: expiresAt });
+            verifiedUsersCache.set(ensureString(member.id), { userId: ensureString(member.id), isVerified: true, expiresAt: expiresAt });
 
 
-            await interaction.reply({ content: `${member.user.tag} has been verified! They can now use the \`/predict\` command.`, ephemeral: false });
+            await interaction.reply({ content: `${ensureString(member.user.tag)} has been verified! They can now use the \`/predict\` command.`, ephemeral: false });
 
             try {
-                await member.send(verificationSuccessfulDM(member.user.username, durationTextForDM));
-                console.log(`Sent verification successful DM to ${member.user.tag}`);
+                await member.send(verificationSuccessfulDM(ensureString(member.user.username), ensureString(durationTextForDM))); // Ensured strings
+                console.log(`Sent verification successful DM to ${ensureString(member.user.tag)}`);
             } catch (dmError) {
-                console.error(`Could not send verification successful DM to ${member.user.tag}. They might have DMs disabled.`, dmError);
-                await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${member.user.tag} with important information, but their DMs might be disabled.)`, ephemeral: false });
+                console.error(`Could not send verification successful DM to ${ensureString(member.user.tag)}. Error: ${ensureString(dmError.message)}. They might have DMs disabled.`, dmError);
+                await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${ensureString(member.user.tag)} with important information, but their DMs might be disabled. Error: ${ensureString(dmError.message)})`, ephemeral: false });
             }
 
         } catch (error) {
-            console.error('Error during verification:', error.message);
+            console.error('Error during verification:', ensureString(error.message));
             await interaction.reply({ content: 'An error occurred during verification. Please try again or contact an admin.', flags: [MessageFlags.Ephemeral] });
         }
     }
 
     // --- /admin subcommand group logic ---
     if (commandName === 'admin') {
-        if (!isAuthorizedAdmin(interaction.user.id)) {
+        if (!isAuthorizedAdmin(ensureString(interaction.user.id))) {
             await interaction.reply({ content: 'You do not have permission to use admin commands.', flags: [MessageFlags.Ephemeral] });
             return;
         }
@@ -423,7 +430,7 @@ client.on('interactionCreate', async interaction => {
 
     // --- /emergency subcommand group logic ---
     if (commandName === 'emergency') {
-        if (!isAuthorizedAdmin(interaction.user.id)) {
+        if (!isAuthorizedAdmin(ensureString(interaction.user.id))) {
             await interaction.reply({ content: 'You do not have permission to use emergency commands.', flags: [MessageFlags.Ephemeral] });
             return;
         }
@@ -496,8 +503,8 @@ Why submit a result? Your submissions help train the prediction model, making it
                 const collection = db.collection('gameResults');
 
                 await collection.insertOne({
-                    userId: interaction.user.id,
-                    username: interaction.user.tag,
+                    userId: ensureString(interaction.user.id),
+                    username: ensureString(interaction.user.tag),
                     serverSeedHash,
                     clientSeed,
                     nonce,
@@ -512,7 +519,7 @@ Why submit a result? Your submissions help train the prediction model, making it
                 await interaction.reply({ content: '❌ Submitted mine positions do not match the computed game outcome or are invalid. Please double-check your input and ensure your algorithm for Rollbet\'s provably fair system is **exactly** correct if you are developing it.', flags: [MessageFlags.Ephemeral] });
             }
         } catch (error) {
-            console.error('Error in /submitresult validation or storage:', error.message);
+            console.error('Error in /submitresult validation or storage:', ensureString(error.message));
             await interaction.reply({ content: 'An unexpected error occurred while processing your submission. Please try again or contact an admin.', flags: [MessageFlags.Ephemeral] });
         }
     }
@@ -525,7 +532,7 @@ Why submit a result? Your submissions help train the prediction model, making it
         const gameResultsCollection = db.collection('gameResults');
 
         try {
-            const userVerification = await verifiedCollection.findOne({ userId: userId });
+            const userVerification = await verifiedCollection.findOne({ userId: ensureString(userId) });
 
             if (!userVerification || !userVerification.isVerified) {
                 await interaction.reply({ content: '🔒 You must be verified to use the \`/predict\` command. Please ask an admin to verify you, or share your game results via \`/submitresult\` to gain access!', flags: [MessageFlags.Ephemeral] });
@@ -534,16 +541,16 @@ Why submit a result? Your submissions help train the prediction model, making it
 
             if (userVerification.expiresAt && userVerification.expiresAt < new Date()) {
                 await verifiedCollection.updateOne(
-                    { userId: userId },
+                    { userId: ensureString(userId) },
                     { $set: { isVerified: false, expiredAt: new Date() } }
                 );
-                verifiedUsersCache.delete(userId);
+                verifiedUsersCache.delete(ensureString(userId));
 
                 try {
-                    await interaction.user.send(accessExpiredDM(interaction.user.username));
-                    console.log(`Sent access expired DM to ${interaction.user.tag}`);
+                    await interaction.user.send(accessExpiredDM(ensureString(interaction.user.username))); // Ensured string
+                    console.log(`Sent access expired DM to ${ensureString(interaction.user.tag)}`);
                 } catch (dmError) {
-                    console.error(`Could not send access expired DM to ${dmError.recipient?.tag || 'unknown user'}. They might have DMs disabled.`, dmError);
+                    console.error(`Could not send access expired DM to ${ensureString(interaction.user.tag)}. Error: ${ensureString(dmError.message)}. They might have DMs disabled.`, dmError);
                 }
 
                 await interaction.reply({ content: 'Expired! ⏳ Your data analysis access has expired. Please check your DMs for more information. Ask an admin to re-verify you or submit more results via \`/submitresult\` for free access!', flags: [MessageFlags.Ephemeral] });
@@ -565,7 +572,7 @@ Why submit a result? Your submissions help train the prediction model, making it
 
             let dataSummary = `Recent validated Rollbet Mines game results:\n`;
             recentGameResults.forEach((game, index) => {
-                dataSummary += `Game ${index + 1}: Mines: ${game.numMines}, Positions: [${game.minePositions.join(', ')}], Nonce: ${game.nonce}\n`;
+                dataSummary += `Game ${index + 1}: Mines: ${ensureString(game.numMines)}, Positions: [${ensureString(game.minePositions.join(', '))}], Nonce: ${ensureString(game.nonce)}\n`;
             });
             dataSummary += `\nBased on this data, provide an analysis of observed patterns or interesting insights regarding mine distribution, game frequencies, or any statistical anomalies. Remind the user this is for data analysis and does not predict future random outcomes.`;
 
@@ -574,7 +581,7 @@ Why submit a result? Your submissions help train the prediction model, making it
             await interaction.editReply({ content: `**🤖 AI Data Analysis from Latest Submissions:**\n\n${aiAnalysis}`, ephemeral: false });
 
         } catch (error) {
-            console.error('Error in /predict or AI analysis:', error.message);
+            console.error('Error in /predict or AI analysis:', ensureString(error.message));
             if (interaction.deferred || interaction.replied) {
                 await interaction.editReply({ content: 'An unexpected error occurred while trying to generate AI analysis. Please try again later.', flags: [MessageFlags.Ephemeral] });
             } else {
