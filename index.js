@@ -7,7 +7,7 @@ import { REST, Routes } from 'discord.js'; // For registering slash commands
 import crypto from 'crypto'; // Node.js built-in crypto module
 import express from 'express'; // Web server for Render health checks and self-ping
 
-// --- Configuration Constants ---
+// --- Configuration Constants (Defined First) ---
 // ONLY these Discord User IDs will have access to /admin, /emergency, and /verify commands.
 const ADMIN_USER_IDS = [
     '862245514313203712',  // Replace with your first admin's actual Discord User ID
@@ -15,7 +15,6 @@ const ADMIN_USER_IDS = [
 ];
 
 // Self-ping system configuration for Render free tier.
-// Render provides RENDER_EXTERNAL_URL env var for your service's public URL.
 const SELF_PING_URL = process.env.RENDER_EXTERNAL_URL;
 const PING_INTERVAL_MS = 5 * 60 * 1000; // Ping every 5 minutes
 
@@ -25,7 +24,7 @@ const MONGO_URI = process.env.MONGO_URI;
 // Discord Bot Token should be set as an environment variable in Render.
 const BOT_TOKEN = process.env.BOT_TOKEN;
 
-// --- Helper Functions (Moved to top for proper scope) ---
+// --- Helper Functions (All Defined Here Before Any Execution Logic) ---
 
 /**
  * Checks if a given Discord user ID is an authorized administrator.
@@ -105,11 +104,9 @@ async function startSelfPing() {
     }
 }
 
-// --- Provably Fair Algorithm Implementation (CRITICAL: YOU MUST FILL THIS IN ACCURATELY) ---
 /**
  * Calculates the provably fair mine positions for a Rollbet game.
  * IMPORTANT: YOU MUST IMPLEMENT THIS FUNCTION ACCURATELY BASED ON ROLLBET'S PUBLICLY DOCUMENTED ALGORITHM.
- * This is the most critical part for '/submitresult' validation.
  * @param {string} serverSeed The server seed (usually the unhashed one provided by the casino for verification).
  * @param {string} clientSeed The client seed.
  * @param {number} nonce The game nonce.
@@ -119,16 +116,13 @@ async function startSelfPing() {
 function calculateRollbetMines(serverSeed, clientSeed, nonce, numMines) {
     console.warn("WARNING: calculateRollbetMines is using a placeholder. Please implement Rollbet's actual provably fair algorithm.");
     // This is a placeholder. Replace with Rollbet's actual algorithm.
-    // For testing, you might use a simple predictable output:
     if (numMines === 3 && clientSeed.startsWith('test')) {
         return [1, 5, 10]; // Example: predictable mines for a 'test' client seed
     }
-    // Return an empty array or throw an error if algorithm not implemented
     return [];
 }
 
-
-// --- MongoDB Connection and Cache Management ---
+// --- MongoDB Connection and Cache Management Functions ---
 let dbClient; // MongoClient instance
 let verifiedUsersCache = new Map(); // Cache for verified users
 
@@ -147,7 +141,6 @@ async function connectToMongoDB() {
         await loadInitialVerifiedUsersCache();
     } catch (error) {
         console.error('Failed to connect to MongoDB:', error.message);
-        // Implement robust retry logic here if needed, or exit as it's a critical dependency
         console.error('Bot cannot function without MongoDB connection. Exiting.');
         process.exit(1); // Fatal error
     }
@@ -168,7 +161,7 @@ async function loadInitialVerifiedUsersCache() {
     }
 }
 
-// --- Gemini API Integration ---
+// --- Gemini API Integration Function ---
 /**
  * Calls the Gemini API to generate text-based analysis.
  * @param {string} prompt The text prompt for the AI.
@@ -200,32 +193,7 @@ async function callGeminiAPI(prompt) {
     }
 }
 
-// --- Discord Client Setup ---
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.DirectMessages,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.MessageContent, // Required for message events if used
-    ],
-    partials: [Partials.Channel, Partials.Message, Partials.GuildMember],
-});
-
-// --- HTTP Server (for Render Health Checks & Self-Ping) ---
-const app = express();
-const PORT = process.env.PORT || 10000; // Use Render's provided PORT, fallback to 10000
-
-app.get('/', (req, res) => {
-    res.send('Bot is running and healthy!');
-});
-
-app.listen(PORT, () => {
-    console.log(`🌐 HTTP server running on port ${PORT}`);
-});
-
-// --- Discord Message Templates ---
-// Defined as functions to ensure dynamic parts are handled safely.
+// --- Discord Message Template Functions (All Defined Here) ---
 const getWelcomeMessage = (username) => `
 Hello ${ensureString(username)}, welcome to the community!
 
@@ -287,13 +255,36 @@ You can no longer use the \`/predict\` command.
 To regain access, please contact an admin for re-verification, or continue contributing game results via \`/submitresult\` for potential free access!
 `;
 
-// --- Discord Client Events ---
+// --- Discord Client Setup ---
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.MessageContent,
+    ],
+    partials: [Partials.Channel, Partials.Message, Partials.GuildMember],
+});
+
+// --- HTTP Server (for Render Health Checks & Self-Ping) ---
+const app = express();
+const PORT = process.env.PORT || 10000;
+
+app.get('/', (req, res) => {
+    res.send('Bot is running and healthy!');
+});
+
+app.listen(PORT, () => {
+    console.log(`🌐 HTTP server running on port ${PORT}`);
+});
+
+// --- Discord Client Events (Come After All Functions Are Defined) ---
 
 client.on('ready', async () => {
     console.log(`🤖 ${client.user.tag} is online and ready to analyze mines!`);
     await connectToMongoDB(); // Connect and load cache on bot start
 
-    // Start self-ping only if URL is available
     if (SELF_PING_URL) {
         console.log(`Starting self-ping system. Pinging ${SELF_PING_URL} every ${PING_INTERVAL_MS / 1000 / 60} minutes.`);
         startSelfPing(); // Initial ping
@@ -318,8 +309,8 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.isCommand()) return;
 
     const { commandName } = interaction;
-    const userId = ensureString(interaction.user.id); // Ensure user ID is string for all uses
-    const userTag = ensureString(interaction.user.tag); // Ensure user tag is string for all uses
+    const userId = ensureString(interaction.user.id);
+    const userTag = ensureString(interaction.user.tag);
 
     try {
         // --- /verify Command Logic (Admin only) ---
@@ -393,7 +384,7 @@ client.on('interactionCreate', async interaction => {
             }
 
             const subCommand = interaction.options.getSubcommand();
-            const db = dbClient.db('MineBotDB'); // Get DB instance here for admin commands
+            const db = dbClient.db('MineBotDB');
 
             if (subCommand === 'revoke') {
                 const targetUser = interaction.options.getUser('user');
@@ -423,11 +414,10 @@ client.on('interactionCreate', async interaction => {
                     await interaction.reply({ content: 'Please specify a user to unban.', flags: [MessageFlags.Ephemeral] });
                     return;
                 }
-                // Assuming 'banned' status is managed in 'verifiedUsers' or a separate collection
                 const verifiedCollection = db.collection('verifiedUsers');
                 await verifiedCollection.updateOne(
                     { userId: ensureString(targetUser.id) },
-                    { $unset: { isBanned: "" }, $set: { lastUnbannedAt: new Date(), unbannedBy: userId } } // Example: unset a 'isBanned' field
+                    { $unset: { isBanned: "" }, $set: { lastUnbannedAt: new Date(), unbannedBy: userId } }
                 );
                 await interaction.reply({ content: `${ensureString(targetUser.tag)} has been unbanned from submitting results.`, ephemeral: false });
             }
@@ -456,10 +446,10 @@ client.on('interactionCreate', async interaction => {
                         userId: ensureString(targetUser.id),
                         username: ensureString(targetUser.tag),
                         isVerified: true,
-                        expiresAt: null, // Emergency verify is permanent
+                        expiresAt: null,
                         verifiedAt: new Date(),
                         verifiedBy: userId,
-                        isEmergencyVerified: true // Mark as emergency verified
+                        isEmergencyVerified: true
                     }},
                     { upsert: true }
                 );
@@ -579,6 +569,7 @@ Why submit a result? Your submissions help train the prediction model, making it
                     { userId: userId },
                     { $set: { isVerified: false, expiredAt: new Date() } }
                 );
+    
                 verifiedUsersCache.delete(userId);
 
                 try {
