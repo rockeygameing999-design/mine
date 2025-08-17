@@ -17,6 +17,32 @@ function isAuthorizedAdmin(userId) {
     return ADMIN_USER_IDS.includes(userId);
 }
 
+// --- SELF-PING SYSTEM CONFIGURATION ---
+// IMPORTANT: Render's free tier services spin down after 15 minutes of inactivity.
+// This self-ping helps keep the service awake. However, it consumes your monthly free instance hours.
+// Render provides the public URL of your service via the RENDER_EXTERNAL_URL environment variable.
+// If this variable is not available or you want to hardcode it, replace process.env.RENDER_EXTERNAL_URL
+// with your bot's actual Render URL (e.g., 'https://mine-ka1i.onrender.com').
+const SELF_PING_URL = process.env.RENDER_EXTERNAL_URL;
+const PING_INTERVAL_MS = 5 * 60 * 1000; // Ping every 5 minutes (300,000 milliseconds)
+
+async function startSelfPing() {
+    if (!SELF_PING_URL) {
+        console.warn('SELF_PING_URL is not set. Self-pinging will not occur.');
+        return;
+    }
+    try {
+        const response = await fetch(SELF_PING_URL);
+        if (response.ok) {
+            console.log(`Self-ping successful to ${SELF_PING_URL}`);
+        } else {
+            console.warn(`Self-ping failed to ${SELF_PING_URL} with status: ${response.status}`);
+        }
+    } catch (error) {
+        console.error(`Error during self-ping to ${SELF_PING_URL}:`, error.message);
+    }
+}
+
 // --- PROVABLY FAIR ALGORITHM IMPLEMENTATION (CRITICAL: YOU MUST FILL THIS IN ACCURATELY) ---
 /**
  * Calculates the provably fair mine positions for a Rollbet game.
@@ -272,6 +298,18 @@ client.on('ready', async () => {
     console.log(`🤖 ${client.user.tag} is online and ready to analyze mines!`);
     await connectToMongoDB();
     await loadInitialVerifiedUsersCache();
+
+    // --- Start Self-Ping System when bot is ready ---
+    // This will send a request to the bot's own URL to keep it awake on Render's free tier.
+    // Ensure SELF_PING_URL is correctly configured at the top of the file.
+    if (SELF_PING_URL) {
+        console.log(`Starting self-ping system. Pinging ${SELF_PING_URL} every ${PING_INTERVAL_MS / 1000 / 60} minutes.`);
+        // Call immediately on start, then set interval
+        startSelfPing();
+        setInterval(startSelfPing, PING_INTERVAL_MS);
+    } else {
+        console.warn('Self-ping URL not found. Self-ping system will not start.');
+    }
 });
 
 // --- New: Guild Member Add Event (Welcome DM on Server Join) ---
@@ -412,7 +450,7 @@ Why submit a result? Your submissions help train the prediction model, making it
     Use the \`/submitresult\` command and fill in the options. For example:
     • \`server_seed_hash\`: \`a1b2c3d4...\`
     • \`client_seed\`: \`VqsjloxT6b\`
-    • \`nonce\`: \`3002\`
+    • • \`nonce\`: \`3002\`
     • \`num_mines\`: \`5\`
     • \`mine_positions\`: \`3,7,12,18,22\`
 
@@ -537,11 +575,9 @@ Why submit a result? Your submissions help train the prediction model, making it
 
         } catch (error) {
             console.error('Error in /predict or AI analysis:', error.message);
-            // Ensure this uses editReply because deferReply was called
             if (interaction.deferred || interaction.replied) {
                 await interaction.editReply({ content: 'An unexpected error occurred while trying to generate AI analysis. Please try again later.', flags: [MessageFlags.Ephemeral] });
             } else {
-                // Fallback reply if somehow not deferred/replied (shouldn't happen with deferReply at start)
                 await interaction.reply({ content: 'An unexpected error occurred while trying to generate AI analysis. Please try again later.', flags: [MessageFlags.Ephemeral] });
             }
         }
