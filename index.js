@@ -1,9 +1,9 @@
-// Required Discord.js and MongoDB modules
+// Required Discord.js, MongoDB, and Express modules
 import { Client, GatewayIntentBits, Partials, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { MongoClient } from 'mongodb';
 import { REST, Routes } from 'discord.js'; // For registering slash commands
-// You will likely need Node.js's built-in 'crypto' module for provably fair calculations.
-import crypto from 'crypto'; // Uncomment this line if you use crypto for your algorithm!
+import crypto from 'crypto'; // You will likely need Node.js's built-in 'crypto' module for provably fair calculations.
+import express from 'express'; // Import Express for the HTTP server
 
 // --- ADMIN CONFIGURATION ---
 // ONLY these Discord User IDs will have access to /admin, /emergency, and /verify commands.
@@ -69,19 +69,16 @@ function calculateRollbetMines(serverSeed, clientSeed, nonce, numMines) {
 
     // --- Current Placeholder Implementation (will likely cause mismatches) ---
     console.warn("WARNING: calculateRollbetMines is using a placeholder. Please implement Rollbet's actual provably fair algorithm.");
-    // This fixed array will only match if the actual game output *happens* to be these mines.
-    // If you're testing, you can modify this temporarily to match a known game result from Rollbet
-    // just to see the "success" message, but then you MUST implement the real algorithm.
-    if (numMines === 3 && clientSeed.startsWith('test')) { // A very specific test case placeholder
+    if (numMines === 3 && clientSeed.startsWith('test')) {
         return [1, 5, 10];
     }
-    return []; // Default to an empty array to consistently fail if not properly implemented
+    return [];
 }
 
 
 // --- MongoDB Connection Setup ---
-const mongoUri = process.env.MONGO_URI; // Your MongoDB connection string from Render
-const clientDB = new MongoClient(mongoUri); // Renamed to avoid conflict with Discord Client
+const mongoUri = process.env.MONGO_URI;
+const clientDB = new MongoClient(mongoUri);
 
 async function connectToMongoDB() {
     try {
@@ -89,10 +86,9 @@ async function connectToMongoDB() {
         console.log('Connected to MongoDB');
     } catch (error) {
         console.error('Failed to connect to MongoDB:', error.message);
-        // Implement exponential backoff for retries
         let retries = 0;
         const maxRetries = 5;
-        const baseDelay = 1000; // 1 second
+        const baseDelay = 1000;
 
         while (retries < maxRetries) {
             const delay = baseDelay * Math.pow(2, retries);
@@ -101,24 +97,19 @@ async function connectToMongoDB() {
             try {
                 await clientDB.connect();
                 console.log('Reconnected to MongoDB');
-                return; // Exit if reconnected successfully
+                return;
             } catch (retryError) {
                 console.error(`Retry failed: ${retryError.message}`);
                 retries++;
             }
         }
         console.error('Max retries reached. Could not connect to MongoDB.');
-        process.exit(1); // Exit if unable to connect after retries
+        process.exit(1);
     }
 }
 
-// --- No longer pre-loading all verified users into memory for strict checks ---
-// Verification status will be checked directly from MongoDB for commands like /predict.
-// This cache is now more for quick reference if needed, but not for strict access control.
-let verifiedUsersCache = new Map(); // A simple cache for frequently accessed verification data
+let verifiedUsersCache = new Map();
 
-// This function can be used to load initial data if needed, but for dynamic checks,
-// querying the DB directly in commands is more reliable for real-time status.
 async function loadInitialVerifiedUsersCache() {
     try {
         const db = clientDB.db('MineBotDB'); // <--- REPLACE THIS WITH YOUR ACTUAL DATABASE NAME!
@@ -141,7 +132,7 @@ async function callGeminiAPI(prompt) {
 
     let retries = 0;
     const maxRetries = 3;
-    const baseDelay = 1000; // 1 second
+    const baseDelay = 1000;
 
     while (retries < maxRetries) {
         try {
@@ -151,12 +142,12 @@ async function callGeminiAPI(prompt) {
                 body: JSON.stringify(payload)
             });
 
-            if (response.status === 429) { // Too Many Requests
+            if (response.status === 429) {
                 const delay = baseDelay * Math.pow(2, retries);
                 console.warn(`Gemini API rate limit hit. Retrying in ${delay / 1000} seconds...`);
                 await new Promise(res => setTimeout(res, delay));
                 retries++;
-                continue; // Try again
+                continue;
             }
 
             if (!response.ok) {
@@ -188,17 +179,32 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.DirectMessages, // REQUIRED for sending DMs
-        GatewayIntentBits.GuildMembers,   // REQUIRED for GuildMemberAdd event and fetching members
-        GatewayIntentBits.MessageContent, // If your bot reads message content (e.g., for prefix commands)
-        // Add any other intents your bot uses (e.g., GuildPresences if you track user status)
+        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.MessageContent,
     ],
-    partials: [Partials.Channel, Partials.Message, Partials.GuildMember], // Partials are important for DMs and messages, and GuildMember for new joins
+    partials: [Partials.Channel, Partials.Message, Partials.GuildMember],
 });
 
-// --- GLOBAL MESSAGE CONTENT CONSTANTS ---
+// --- HTTP SERVER SETUP (REQUIRED for Render Web Service health check) ---
+// If you intend to run this as a "Web Service" on Render (e.g., for the free tier),
+// you MUST have an HTTP server listening on the port provided by Render.
+// If you do NOT want a web server (and prefer a pure background worker),
+// you would need to switch to Render's "Background Worker" service type (which is usually a paid feature).
+const app = express();
+const PORT = process.env.PORT || 10000; // Use Render's provided PORT env var, or fallback
 
-// Message for new members joining the server
+// Basic root endpoint for Render's health check or a simple web dashboard
+app.get('/', (req, res) => {
+    res.send('Bot is running and healthy!');
+});
+
+app.listen(PORT, () => {
+    console.log(`🌐 HTTP server running on port ${PORT}`);
+});
+
+
+// --- GLOBAL MESSAGE CONTENT CONSTANTS ---
 const welcomeAndWarningMessage = `
 Hello {USERNAME}, welcome to the community!
 
@@ -225,7 +231,6 @@ Hello {USERNAME}, welcome to the community!
 Please make sure to read and follow these rules. Enjoy your time here!
 `;
 
-// Message for successful verification via /verify command
 const verificationSuccessfulDM = (username, durationText) => `
 **Verification Successful!** 🎉
 
@@ -250,7 +255,6 @@ Failure to submit 80% of your results may lead to an automatic ban from the serv
 Professional Mine Prediction Service •
 `;
 
-// Message for when prediction access expires
 const accessExpiredDM = (username) => `
 **Access Expired!** 😔
 
@@ -266,54 +270,42 @@ To regain access, please contact an admin for re-verification, or continue contr
 // --- Bot Ready Event ---
 client.on('ready', async () => {
     console.log(`🤖 ${client.user.tag} is online and ready to analyze mines!`);
-    await connectToMongoDB(); // Connect to MongoDB when the bot is ready
-    await loadInitialVerifiedUsersCache(); // Load initial cache (optional, but good for quick checks)
-    // Any other initialization logic for your bot goes here
+    await connectToMongoDB();
+    await loadInitialVerifiedUsersCache();
 });
 
 // --- New: Guild Member Add Event (Welcome DM on Server Join) ---
 client.on('guildMemberAdd', async member => {
     console.log(`New member joined: ${member.user.tag} (${member.id})`);
     try {
-        // Personalize the message for the new member
         const personalizedWelcomeMessage = welcomeAndWarningMessage.replace('{USERNAME}', member.user.username);
         await member.send(personalizedWelcomeMessage);
         console.log(`Sent welcome DM to new member: ${member.user.tag}`);
     } catch (error) {
         console.error(`Could not send welcome DM to ${member.user.tag}. They might have DMs disabled.`, error);
-        // Optionally, send a message in a public welcome channel
-        // const welcomeChannel = member.guild.channels.cache.find(channel => channel.name === 'welcome'); // Replace 'welcome' with your actual welcome channel name
-        // if (welcomeChannel) {
-        //     welcomeChannel.send(`Welcome to the server, ${member}! Please check your DMs for important information. If you don't receive it, ensure your DMs are open.`);
-        // }
     }
 });
 
 // --- Interaction Handling (for slash commands) ---
 client.on('interactionCreate', async interaction => {
-    // Only process slash commands
     if (!interaction.isCommand()) return;
 
     const { commandName } = interaction;
 
     // --- /verify Command Logic (Admin only, verifies by user ID, with duration) ---
     if (commandName === 'verify') {
-        // Check if the command issuer is one of the authorized admins
         if (!isAuthorizedAdmin(interaction.user.id)) {
             await interaction.reply({ content: 'You do not have permission to use this command. Only designated administrators can verify users.', flags: [MessageFlags.Ephemeral] });
             return;
         }
 
-        // Fix: Ensure targetUser is always a valid User object by defaulting to interaction.user
-        // If the slash command's 'user' option is marked as 'required: true', this fallback is technically not needed
-        // as Discord will ensure a user is provided. However, it's good defensive programming.
         const targetUser = interaction.options.getUser('user') || interaction.user;
-        console.log(`[DEBUG /verify] targetUser: ${targetUser ? targetUser.tag : 'null/undefined'} (ID: ${targetUser ? targetUser.id : 'N/A'})`); // Added detailed debug log
+        console.log(`[DEBUG /verify] targetUser: ${targetUser ? targetUser.tag : 'null/undefined'} (ID: ${targetUser ? targetUser.id : 'N/A'})`);
 
         const durationOption = interaction.options.getString('duration');
 
         const member = interaction.guild.members.cache.get(targetUser.id);
-        console.log(`[DEBUG /verify] member from cache: ${member ? member.user.tag : 'null/undefined'} (ID: ${member ? member.id : 'N/A'})`); // Added detailed debug log
+        console.log(`[DEBUG /verify] member from cache: ${member ? member.user.tag : 'null/undefined'} (ID: ${member ? member.id : 'N/A'})`);
 
         if (!member) {
             await interaction.reply({ content: 'Could not find that user in this server. Please ensure the ID is correct or the user is in the server.', flags: [MessageFlags.Ephemeral] });
@@ -513,7 +505,7 @@ Why submit a result? Your submissions help train the prediction model, making it
                     await interaction.user.send(accessExpiredDM(interaction.user.username));
                     console.log(`Sent access expired DM to ${interaction.user.tag}`);
                 } catch (dmError) {
-                    console.error(`Could not send access expired DM to ${interaction.user.tag}. They might have DMs disabled.`, dmError);
+                    console.error(`Could not send access expired DM to ${dmError.recipient?.tag || 'unknown user'}. They might have DMs disabled.`, dmError);
                 }
 
                 await interaction.reply({ content: 'Expired! ⏳ Your data analysis access has expired. Please check your DMs for more information. Ask an admin to re-verify you or submit more results via \`/submitresult\` for free access!', flags: [MessageFlags.Ephemeral] });
@@ -546,30 +538,22 @@ Why submit a result? Your submissions help train the prediction model, making it
         } catch (error) {
             console.error('Error in /predict or AI analysis:', error.message);
             // Ensure this uses editReply because deferReply was called
-            // Add a check to ensure interaction is still valid before attempting to editReply again
-            if (!interaction.replied && !interaction.deferred) {
-                // This case should ideally not be hit if deferReply is always at the start of /predict
-                await interaction.reply({ content: 'An unexpected error occurred while trying to generate AI analysis. Please try again later.', flags: [MessageFlags.Ephemeral] });
-            } else {
+            if (interaction.deferred || interaction.replied) {
                 await interaction.editReply({ content: 'An unexpected error occurred while trying to generate AI analysis. Please try again later.', flags: [MessageFlags.Ephemeral] });
+            } else {
+                // Fallback reply if somehow not deferred/replied (shouldn't happen with deferReply at start)
+                await interaction.reply({ content: 'An unexpected error occurred while trying to generate AI analysis. Please try again later.', flags: [MessageFlags.Ephemeral] });
             }
         }
     }
 });
 
 // --- Bot Login ---
-// Make sure your BOT_TOKEN environment variable is set on Render
 client.login(process.env.BOT_TOKEN);
 
 // --- Slash Command Registration (Run this section ONCE manually or in a separate deploy script) ---
-// This part defines and registers your bot's slash commands with Discord.
-// You typically run this a single time after adding/modifying commands,
-// or as part of your CI/CD pipeline.
-// For development, you might uncomment this, fill in your IDs, run `node index.js` once, then comment it out again.
-
 /*
 const commands = [
-    // /verify command - Admin only to manually verify a user with duration
     {
         name: 'verify',
         description: 'Admin: Verifies a user by ID for permanent or time-based access.',
@@ -595,7 +579,6 @@ const commands = [
             },
         ],
     },
-    // /admin subcommand group
     {
         name: 'admin',
         description: 'Administrator commands for bot management.',
@@ -633,7 +616,6 @@ const commands = [
             },
         ],
     },
-    // /emergency subcommand group
     {
         name: 'emergency',
         description: 'Emergency administrator commands (use with caution).',
@@ -653,22 +635,18 @@ const commands = [
             },
         ],
     },
-    // /how_to_submit_result command
     {
         name: 'how_to_submit_result',
         description: 'Shows instructions on how to submit a game result.',
     },
-    // /leaderboard command
     {
         name: 'leaderboard',
         description: 'Shows users who submitted the most results.',
     },
-    // /myresult command
     {
         name: 'myresult',
         description: 'Shows how many results you have submitted.',
     },
-    // /submitresult command
     {
         name: 'submitresult',
         description: 'Submits your game results to improve bot data collection and validation.',
@@ -707,7 +685,6 @@ const commands = [
             },
         ],
     },
-    // /predict command (now for data analysis, not actual prediction)
     {
        name: 'predict',
        description: 'Analyze past game data (requires verification).',
