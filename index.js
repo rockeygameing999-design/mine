@@ -1,248 +1,248 @@
 // Required Discord.js, MongoDB, and Express modules
-    import { Client, GatewayIntentBits, Partials, PermissionFlagsBits, MessageFlags } from 'discord.js';
-    import { MongoClient } from 'mongodb';
-    import { REST, Routes } from 'discord.js'; // For registering slash commands
-    import crypto from 'crypto'; // You will likely need Node.js's built-in 'crypto' module for provably fair calculations.
-    import express from 'express'; // Import Express for the HTTP server
+import { Client, GatewayIntentBits, Partials, PermissionFlagsBits, MessageFlags } from 'discord.js';
+import { MongoClient } from 'mongodb';
+import { REST, Routes } from 'discord.js'; // For registering slash commands
+import crypto from 'crypto'; // You will likely need Node.js's built-in 'crypto' module for provably fair calculations.
+import express from 'express'; // Import Express for the HTTP server
 
-    // --- ADMIN CONFIGURATION ---
-    // ONLY these Discord User IDs will have access to /admin, /emergency, and /verify commands.
-    const ADMIN_USER_IDS = [
-        '862245514313203712',  // Replace with the first admin's actual Discord User ID
-        '1321546526790651967' // Replace with the second admin's actual Discord User ID
-    ];
+// --- ADMIN CONFIGURATION ---
+// ONLY these Discord User IDs will have access to /admin, /emergency, and /verify commands.
+const ADMIN_USER_IDS = [
+    '862245514313203712',  // Replace with the first admin's actual Discord User ID
+    '1321546526790651967' // Replace with the second admin's actual Discord User ID
+];
 
-    // Helper function to check if a user is an authorized admin
-    function isAuthorizedAdmin(userId) {
-        return ADMIN_USER_IDS.includes(userId);
+// Helper function to check if a user is an authorized admin
+function isAuthorizedAdmin(userId) {
+    return ADMIN_USER_IDS.includes(userId);
+}
+
+// --- DEFENSIVE STRING HANDLING (NEW) ---
+// Ensures a value is a string, preventing 'Cannot read properties of null (reading 'replace')'
+function ensureString(value) {
+    if (value === null || value === undefined) {
+        return 'unknown'; // Default value for null/undefined
+    }
+    return String(value); // Convert to string
+}
+
+// --- SELF-PING SYSTEM CONFIGURATION ---
+// IMPORTANT: Render's free tier services spin down after 15 minutes of inactivity.
+// This self-ping helps keep the service awake. However, it consumes your monthly free instance hours.
+// Render provides the public URL of your service via the RENDER_EXTERNAL_URL environment variable.
+// If this variable is not available or you want to hardcode it, replace process.env.RENDER_EXTERNAL_URL
+// with your bot's actual Render URL (e.g., 'https://mine-ka1i.onrender.com').
+const SELF_PING_URL = process.env.RENDER_EXTERNAL_URL;
+const PING_INTERVAL_MS = 5 * 60 * 1000; // Ping every 5 minutes (300,000 milliseconds)
+
+async function startSelfPing() {
+    if (!SELF_PING_URL) {
+        console.warn('SELF_PING_URL is not set. Self-pinging will not occur.');
+        return;
+    }
+    try {
+        const response = await fetch(SELF_PING_URL);
+        if (response.ok) {
+            console.log(`Self-ping successful to ${SELF_PING_URL}`);
+        } else {
+            console.warn(`Self-ping failed to ${SELF_PING_URL} with status: ${response.status}`);
+        }
+    } catch (error) {
+        console.error(`Error during self-ping to ${SELF_PING_URL}:`, error.message);
+    }
+}
+
+// --- PROVABLY FAIR ALGORITHM IMPLEMENTATION (CRITICAL: YOU MUST FILL THIS IN ACCURATELY) ---
+/**
+ * Calculates the provably fair mine positions for a Rollbet game.
+ *
+ * IMPORTANT: YOU MUST IMPLEMENT THIS FUNCTION ACCURATELY BASED ON ROLLBET'S PUBLICLY DOCUMENTED ALGORITHM.
+ * This is the most critical part for '/submitresult' validation.
+ *
+ * Steps typically involved:
+ * 1. Combining the server seed (often unhashed, revealed after game), client seed, and nonce.
+ * 2. Applying a cryptographic hash function (e.g., SHA256, HMAC-SHA256) to this combined string.
+ * (You'll need `import crypto from 'crypto';` for this).
+ * 3. Using the resulting hash to derive a sequence of pseudo-random numbers.
+ * 4. Mapping these random numbers to select 'numMines' unique positions on the 0-24 grid.
+ *
+ * Without Rollbet's exact algorithm, '/submitresult' will always fail validation.
+ *
+ * @param {string} serverSeed The server seed (usually the unhashed one provided by the casino for verification).
+ * @param {string} clientSeed The client seed.
+ * @param {number} nonce The game nonce.
+ * @param {number} numMines The number of mines for the game.
+ * @returns {number[]} An array of mine positions (0-24) sorted in ascending order.
+ */
+function calculateRollbetMines(serverSeed, clientSeed, nonce, numMines) {
+    // --- THIS IS A PLACEHOLDER. REPLACE WITH ROLLBET'S REAL ALGORITHM. ---
+    // Example conceptual code (NOT Rollbet's actual logic):
+    /*
+    const combinedString = `${serverSeed}-${clientSeed}-${nonce}`;
+    const hash = crypto.createHash('sha256').update(combinedString).digest('hex');
+
+    // Simplified pseudo-random number generation from hash
+    let seedValue = parseInt(hash.substring(0, 16), 16); // Use a portion of the hash as initial seed
+    const pseudoRandomNumbers = [];
+    for (let i = 0; i < 25; i++) { // Generate enough random numbers for all positions
+        seedValue = (seedValue * 9301 + 49297) % 233280; // Simple LCG
+        pseudoRandomNumbers.push(seedValue / 233280);
     }
 
-    // --- DEFENSIVE STRING HANDLING (NEW) ---
-    // Ensures a value is a string, preventing 'Cannot read properties of null (reading 'replace')'
-    function ensureString(value) {
-        if (value === null || value === undefined) {
-            return 'unknown'; // Default value for null/undefined
-        }
-        return String(value); // Convert to string
+    const availablePositions = Array.from({ length: 25 }, (_, i) => i);
+    const minePositions = [];
+
+    // Select unique mines based on pseudo-random numbers
+    for (let i = 0; i < numMines; i++) {
+        const randomValue = pseudoRandomNumbers[i % pseudoRandomNumbers.length]; // Cycle through generated numbers
+        const randomIndex = Math.floor(randomValue * availablePositions.length);
+        minePositions.push(availablePositions.splice(randomIndex, 1)[0]);
     }
 
-    // --- SELF-PING SYSTEM CONFIGURATION ---
-    // IMPORTANT: Render's free tier services spin down after 15 minutes of inactivity.
-    // This self-ping helps keep the service awake. However, it consumes your monthly free instance hours.
-    // Render provides the public URL of your service via the RENDER_EXTERNAL_URL environment variable.
-    // If this variable is not available or you want to hardcode it, replace process.env.RENDER_EXTERNAL_URL
-    // with your bot's actual Render URL (e.g., 'https://mine-ka1i.onrender.com').
-    const SELF_PING_URL = process.env.RENDER_EXTERNAL_URL;
-    const PING_INTERVAL_MS = 5 * 60 * 1000; // Ping every 5 minutes (300,000 milliseconds)
+    return minePositions.sort((a, b) => a - b);
+    */
 
-    async function startSelfPing() {
-        if (!SELF_PING_URL) {
-            console.warn('SELF_PING_URL is not set. Self-pinging will not occur.');
-            return;
-        }
-        try {
-            const response = await fetch(SELF_PING_URL);
-            if (response.ok) {
-                console.log(`Self-ping successful to ${SELF_PING_URL}`);
-            } else {
-                console.warn(`Self-ping failed to ${SELF_PING_URL} with status: ${response.status}`);
-            }
-        } catch (error) {
-            console.error(`Error during self-ping to ${SELF_PING_URL}:`, error.message);
-        }
+    // --- Current Placeholder Implementation (will likely cause mismatches) ---
+    console.warn("WARNING: calculateRollbetMines is using a placeholder. Please implement Rollbet's actual provably fair algorithm.");
+    if (numMines === 3 && clientSeed.startsWith('test')) {
+        return [1, 5, 10];
     }
-
-    // --- PROVABLY FAIR ALGORITHM IMPLEMENTATION (CRITICAL: YOU MUST FILL THIS IN ACCURATELY) ---
-    /**
-     * Calculates the provably fair mine positions for a Rollbet game.
-     *
-     * IMPORTANT: YOU MUST IMPLEMENT THIS FUNCTION ACCURATELY BASED ON ROLLBET'S PUBLICLY DOCUMENTED ALGORITHM.
-     * This is the most critical part for '/submitresult' validation.
-     *
-     * Steps typically involved:
-     * 1. Combining the server seed (often unhashed, revealed after game), client seed, and nonce.
-     * 2. Applying a cryptographic hash function (e.g., SHA256, HMAC-SHA256) to this combined string.
-     * (You'll need `import crypto from 'crypto';` for this).
-     * 3. Using the resulting hash to derive a sequence of pseudo-random numbers.
-     * 4. Mapping these random numbers to select 'numMines' unique positions on the 0-24 grid.
-     *
-     * Without Rollbet's exact algorithm, '/submitresult' will always fail validation.
-     *
-     * @param {string} serverSeed The server seed (usually the unhashed one provided by the casino for verification).
-     * @param {string} clientSeed The client seed.
-     * @param {number} nonce The game nonce.
-     * @param {number} numMines The number of mines for the game.
-     * @returns {number[]} An array of mine positions (0-24) sorted in ascending order.
-     */
-    function calculateRollbetMines(serverSeed, clientSeed, nonce, numMines) {
-        // --- THIS IS A PLACEHOLDER. REPLACE WITH ROLLBET'S REAL ALGORITHM. ---
-        // Example conceptual code (NOT Rollbet's actual logic):
-        /*
-        const combinedString = `${serverSeed}-${clientSeed}-${nonce}`;
-        const hash = crypto.createHash('sha256').update(combinedString).digest('hex');
-
-        // Simplified pseudo-random number generation from hash
-        let seedValue = parseInt(hash.substring(0, 16), 16); // Use a portion of the hash as initial seed
-        const pseudoRandomNumbers = [];
-        for (let i = 0; i < 25; i++) { // Generate enough random numbers for all positions
-            seedValue = (seedValue * 9301 + 49297) % 233280; // Simple LCG
-            pseudoRandomNumbers.push(seedValue / 233280);
-        }
-
-        const availablePositions = Array.from({ length: 25 }, (_, i) => i);
-        const minePositions = [];
-
-        // Select unique mines based on pseudo-random numbers
-        for (let i = 0; i < numMines; i++) {
-            const randomValue = pseudoRandomNumbers[i % pseudoRandomNumbers.length]; // Cycle through generated numbers
-            const randomIndex = Math.floor(randomValue * availablePositions.length);
-            minePositions.push(availablePositions.splice(randomIndex, 1)[0]);
-        }
-
-        return minePositions.sort((a, b) => a - b);
-        */
-
-        // --- Current Placeholder Implementation (will likely cause mismatches) ---
-        console.warn("WARNING: calculateRollbetMines is using a placeholder. Please implement Rollbet's actual provably fair algorithm.");
-        if (numMines === 3 && clientSeed.startsWith('test')) {
-            return [1, 5, 10];
-        }
-        return [];
-    }
+    return [];
+}
 
 
-    // --- MongoDB Connection Setup ---
-    const mongoUri = process.env.MONGO_URI;
-    const clientDB = new MongoClient(mongoUri);
+// --- MongoDB Connection Setup ---
+const mongoUri = process.env.MONGO_URI;
+const clientDB = new MongoClient(mongoUri);
 
-    async function connectToMongoDB() {
-        try {
-            await clientDB.connect();
-            console.log('Connected to MongoDB');
-        } catch (error) {
-            console.error('Failed to connect to MongoDB:', error.message);
-            let retries = 0;
-            const maxRetries = 5;
-            const baseDelay = 1000;
-
-            while (retries < maxRetries) {
-                const delay = baseDelay * Math.pow(2, retries);
-                console.log(`Retrying MongoDB connection in ${delay / 1000} seconds... (Attempt ${retries + 1})`);
-                await new Promise(res => setTimeout(res, delay));
-                try {
-                    await clientDB.connect();
-                    console.log('Reconnected to MongoDB');
-                    return;
-                } catch (retryError) {
-                    console.error(`Retry failed: ${retryError.message}`);
-                    retries++;
-                }
-            }
-            console.error('Max retries reached. Could not connect to MongoDB.');
-            process.exit(1);
-        }
-    }
-
-    let verifiedUsersCache = new Map();
-
-    async function loadInitialVerifiedUsersCache() {
-        try {
-            const db = clientDB.db('MineBotDB'); // <--- REPLACE THIS WITH YOUR ACTUAL DATABASE NAME!
-            const collection = db.collection('verifiedUsers');
-            const users = await collection.find({}).toArray();
-            verifiedUsersCache = new Map(users.map(user => [user.userId, user]));
-            console.log(`Loaded ${verifiedUsersCache.size} verifiedUsers into cache from MongoDB`);
-        } catch (error) {
-            console.error('Error loading initial verifiedUsers cache from MongoDB:', error.message);
-        }
-    }
-
-    // --- Gemini API Call Function ---
-    async function callGeminiAPI(prompt) {
-        let chatHistory = [];
-        chatHistory.push({ role: "user", parts: [{ text: prompt }] });
-        const payload = { contents: chatHistory };
-        const apiKey = ""; // Canvas will automatically provide it in runtime
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
-
+async function connectToMongoDB() {
+    try {
+        await clientDB.connect();
+        console.log('Connected to MongoDB');
+    } catch (error) {
+        console.error('Failed to connect to MongoDB:', error.message);
         let retries = 0;
-        const maxRetries = 3;
+        const maxRetries = 5;
         const baseDelay = 1000;
 
         while (retries < maxRetries) {
+            const delay = baseDelay * Math.pow(2, retries);
+            console.log(`Retrying MongoDB connection in ${delay / 1000} seconds... (Attempt ${retries + 1})`);
+            await new Promise(res => setTimeout(res, delay));
             try {
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                if (response.status === 429) {
-                    const delay = baseDelay * Math.pow(2, retries);
-                    console.warn(`Gemini API rate limit hit. Retrying in ${delay / 1000} seconds...`);
-                    await new Promise(res => setTimeout(res, delay));
-                    retries++;
-                    continue;
-                }
-
-                if (!response.ok) {
-                    throw new Error(`Gemini API HTTP error! Status: ${response.status}`);
-                }
-
-                const result = await response.json();
-                if (result.candidates && result.candidates.length > 0 &&
-                    result.candidates[0].content && result.candidates[0].content.parts &&
-                    result.candidates[0].content.parts.length > 0) {
-                    return result.candidates[0].content.parts[0].text;
-                } else {
-                    console.error("Unexpected Gemini API response structure:", result);
-                    return "Could not generate analysis due to an unexpected AI response.";
-                }
-            } catch (error) {
-                console.error('Error calling Gemini API:', error.message);
-                const delay = baseDelay * Math.pow(2, retries);
-                console.warn(`Error calling Gemini API. Retrying in ${delay / 1000} seconds...`);
-                await new Promise(res => setTimeout(res, delay));
+                await clientDB.connect();
+                console.log('Reconnected to MongoDB');
+                return;
+            } catch (retryError) {
+                console.error(`Retry failed: ${retryError.message}`);
                 retries++;
             }
         }
-        return "Failed to generate analysis after multiple retries. Please try again later.";
+        console.error('Max retries reached. Could not connect to MongoDB.');
+        process.exit(1);
     }
+}
 
-    // Ensure you have the necessary intents for DMs and Guild Members
-    const client = new Client({
-        intents: [
-            GatewayIntentBits.Guilds,
-            GatewayIntentBits.GuildMessages,
-            GatewayIntentBits.DirectMessages,
-            GatewayIntentBits.GuildMembers,
-            GatewayIntentBits.MessageContent,
-        ],
-        partials: [Partials.Channel, Partials.Message, Partials.GuildMember],
-    });
+let verifiedUsersCache = new Map();
 
-    // --- HTTP SERVER SETUP (REQUIRED for Render Web Service health check) ---
-    // If you intend to run this as a "Web Service" on Render (e.g., for the free tier),
-    // you MUST have an HTTP server listening on the port provided by Render.
-    // If you do NOT want a web server (and prefer a pure background worker),
-    // you would need to switch to Render's "Background Worker" service type (which is usually a paid feature).
-    const app = express();
-    const PORT = process.env.PORT || 10000; // Use Render's provided PORT env var, or fallback
+async function loadInitialVerifiedUsersCache() {
+    try {
+        const db = clientDB.db('MineBotDB'); // <--- REPLACE THIS WITH YOUR ACTUAL DATABASE NAME!
+        const collection = db.collection('verifiedUsers');
+        const users = await collection.find({}).toArray();
+        verifiedUsersCache = new Map(users.map(user => [user.userId, user]));
+        console.log(`Loaded ${verifiedUsersCache.size} verifiedUsers into cache from MongoDB`);
+    } catch (error) {
+        console.error('Error loading initial verifiedUsers cache from MongoDB:', error.message);
+    }
+}
 
-    // Basic root endpoint for Render's health check or a simple web dashboard
-    app.get('/', (req, res) => {
-        res.send('Bot is running and healthy!');
-    });
+// --- Gemini API Call Function ---
+async function callGeminiAPI(prompt) {
+    let chatHistory = [];
+    chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+    const payload = { contents: chatHistory };
+    const apiKey = ""; // Canvas will automatically provide it in runtime
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
 
-    app.listen(PORT, () => {
-        console.log(`🌐 HTTP server running on port ${PORT}`);
-    });
+    let retries = 0;
+    const maxRetries = 3;
+    const baseDelay = 1000;
+
+    while (retries < maxRetries) {
+        try {
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (response.status === 429) {
+                const delay = baseDelay * Math.pow(2, retries);
+                console.warn(`Gemini API rate limit hit. Retrying in ${delay / 1000} seconds...`);
+                await new Promise(res => setTimeout(res, delay));
+                retries++;
+                continue;
+            }
+
+            if (!response.ok) {
+                throw new Error(`Gemini API HTTP error! Status: ${response.status}`);
+            }
+
+            const result = await response.json();
+            if (result.candidates && result.candidates.length > 0 &&
+                result.candidates[0].content && result.candidates[0].content.parts &&
+                result.candidates[0].content.parts.length > 0) {
+                return result.candidates[0].content.parts[0].text;
+            } else {
+                console.error("Unexpected Gemini API response structure:", result);
+                return "Could not generate analysis due to an unexpected AI response.";
+            }
+        } catch (error) {
+            console.error('Error calling Gemini API:', error.message);
+            const delay = baseDelay * Math.pow(2, retries);
+            console.warn(`Error calling Gemini API. Retrying in ${delay / 1000} seconds...`);
+            await new Promise(res => setTimeout(res, delay));
+            retries++;
+        }
+    }
+    return "Failed to generate analysis after multiple retries. Please try again later.";
+}
+
+// Ensure you have the necessary intents for DMs and Guild Members
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.MessageContent,
+    ],
+    partials: [Partials.Channel, Partials.Message, Partials.GuildMember],
+});
+
+// --- HTTP SERVER SETUP (REQUIRED for Render Web Service health check) ---
+// If you intend to run this as a "Web Service" on Render (e.g., for the free tier),
+// you MUST have an HTTP server listening on the port provided by Render.
+// If you do NOT want a web server (and prefer a pure background worker),
+// you would need to switch to Render's "Background Worker" service type (which is usually a paid feature).
+const app = express();
+const PORT = process.env.PORT || 10000; // Use Render's provided PORT env var, or fallback
+
+// Basic root endpoint for Render's health check or a simple web dashboard
+app.get('/', (req, res) => {
+    res.send('Bot is running and healthy!');
+});
+
+app.listen(PORT, () => {
+    console.log(`🌐 HTTP server running on port ${PORT}`);
+});
 
 
-    // --- GLOBAL MESSAGE CONTENT CONSTANTS ---
-    // Ensured all interpolations use ensureString for robustness
-    const welcomeAndWarningMessage = `
-Hello {USERNAME}, welcome to the community!
+// --- GLOBAL MESSAGE CONTENT CONSTANTS (NOW FUNCTIONS FOR ROBUSTNESS) ---
+// Changed to a function to prevent 'null' issues with .replace() on the constant itself
+const getWelcomeAndWarningMessage = (username) => `
+Hello ${ensureString(username)}, welcome to the community!
 
 # 🔮 Why Trust Our Bot?
 > **Our bot is a community tool for data validation and analysis for Rollbet's Mines game. We are not a scam or a source of guaranteed wins. Our purpose is to prove the game is truly random and to help improve community understanding.**
@@ -267,7 +267,7 @@ Hello {USERNAME}, welcome to the community!
 Please make sure to read and follow these rules. Enjoy your time here!
 `;
 
-    const verificationSuccessfulDM = (username, durationText) => `
+const verificationSuccessfulDM = (username, durationText) => `
 **Verification Successful!** 🎉
 
 Hello ${ensureString(username)}, you have been granted access to the mine prediction service!
@@ -291,7 +291,7 @@ Failure to submit 80% of your results may lead to an automatic ban from the serv
 Professional Mine Prediction Service •
 `;
 
-    const accessExpiredDM = (username) => `
+const accessExpiredDM = (username) => `
 **Access Expired!** 😔
 
 Hello ${ensureString(username)}, your access to the mine data analysis service has expired.
@@ -303,149 +303,153 @@ To regain access, please contact an admin for re-verification, or continue contr
 `;
 
 
-    // --- Bot Ready Event ---
-    client.on('ready', async () => {
-        console.log(`🤖 ${client.user.tag} is online and ready to analyze mines!`);
-        await connectToMongoDB();
-        await loadInitialVerifiedUsersCache();
+// --- Bot Ready Event ---
+client.on('ready', async () => {
+    console.log(`🤖 ${client.user.tag} is online and ready to analyze mines!`);
+    await connectToMongoDB();
+    await loadInitialVerifiedUsersCache();
 
-        // --- Start Self-Ping System when bot is ready ---
-        if (SELF_PING_URL) {
-            console.log(`Starting self-ping system. Pinging ${SELF_PING_URL} every ${PING_INTERVAL_MS / 1000 / 60} minutes.`);
-            startSelfPing();
-            setInterval(startSelfPing, PING_INTERVAL_MS);
-        } else {
-            console.warn('Self-ping URL not found. Self-ping system will not start.');
+    // --- Start Self-Ping System when bot is ready ---
+    // This will send a request to the bot's own URL to keep it awake on Render's free tier.
+    // Ensure SELF_PING_URL is correctly configured at the top of the file.
+    if (SELF_PING_URL) {
+        console.log(`Starting self-ping system. Pinging ${SELF_PING_URL} every ${PING_INTERVAL_MS / 1000 / 60} minutes.`);
+        // Call immediately on start, then set interval
+        startSelfPing();
+        setInterval(startSelfPing, PING_INTERVAL_MS);
+    } else {
+        console.warn('Self-ping URL not found. Self-ping system will not start.');
+    }
+});
+
+// --- New: Guild Member Add Event (Welcome DM on Server Join) ---
+client.on('guildMemberAdd', async member => {
+    console.log(`New member joined: ${ensureString(member.user.tag)} (${ensureString(member.id)})`);
+    try {
+        // Call the message function to get the personalized string
+        const personalizedWelcomeMessage = getWelcomeAndWarningMessage(member.user.username);
+        await member.send(personalizedWelcomeMessage);
+        console.log(`Sent welcome DM to new member: ${ensureString(member.user.tag)}`);
+    } catch (error) {
+        console.error(`Could not send welcome DM to ${ensureString(member.user.tag)}. Error: ${ensureString(error.message)}. They might have DMs disabled.`, error);
+    }
+});
+
+// --- Interaction Handling (for slash commands) ---
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isCommand()) return;
+
+    const { commandName } = interaction;
+
+    // --- /verify Command Logic (Admin only, verifies by user ID, with duration) ---
+    if (commandName === 'verify') {
+        if (!isAuthorizedAdmin(ensureString(interaction.user.id))) {
+            await interaction.reply({ content: 'You do not have permission to use this command. Only designated administrators can verify users.', flags: [MessageFlags.Ephemeral] });
+            return;
         }
-    });
 
-    // --- New: Guild Member Add Event (Welcome DM on Server Join) ---
-    client.on('guildMemberAdd', async member => {
-        console.log(`New member joined: ${ensureString(member.user.tag)} (${ensureString(member.id)})`);
+        const targetUser = interaction.options.getUser('user') || interaction.user;
+        console.log(`[DEBUG /verify] targetUser: ${ensureString(targetUser ? targetUser.tag : 'null/undefined')} (ID: ${ensureString(targetUser ? targetUser.id : 'N/A')})`);
+
+        const durationOption = interaction.options.getString('duration');
+
+        const member = interaction.guild.members.cache.get(ensureString(targetUser.id)); // ensure targetUser.id is a string
+        console.log(`[DEBUG /verify] member from cache: ${ensureString(member ? member.user.tag : 'null/undefined')} (ID: ${ensureString(member ? member.id : 'N/A')})`);
+
+        if (!member) {
+            await interaction.reply({ content: 'Could not find that user in this server. Please ensure the ID is correct or the user is in the server.', flags: [MessageFlags.Ephemeral] });
+            return;
+        }
+
+        let expiresAt = null;
+        let durationTextForDM = "Permanent access";
+
+        if (durationOption !== 'permanent') {
+            const days = parseInt(durationOption.replace('d', ''), 10);
+            if (!isNaN(days) && days > 0) {
+                expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+                durationTextForDM = `Access for ${days} Days (until ${expiresAt.toLocaleDateString()})`;
+            } else {
+                await interaction.reply({ content: 'Invalid duration specified. Please use "permanent", "7d", "30d", "90d", or "365d".', flags: [MessageFlags.Ephemeral] });
+                return;
+            }
+        }
+
         try {
-            const personalizedWelcomeMessage = welcomeAndWarningMessage.replace('{USERNAME}', ensureString(member.user.username));
-            await member.send(personalizedWelcomeMessage);
-            console.log(`Sent welcome DM to new member: ${ensureString(member.user.tag)}`);
-        } catch (error) {
-            console.error(`Could not send welcome DM to ${ensureString(member.user.tag)}. Error: ${ensureString(error.message)}. They might have DMs disabled.`, error);
-        }
-    });
+            const db = clientDB.db('MineBotDB'); // <--- REPLACE THIS WITH YOUR ACTUAL DATABASE NAME!
+            const collection = db.collection('verifiedUsers');
 
-    // --- Interaction Handling (for slash commands) ---
-    client.on('interactionCreate', async interaction => {
-        if (!interaction.isCommand()) return;
+            await collection.updateOne(
+                { userId: ensureString(member.id) }, // Ensure ID is string
+                { $set: {
+                    userId: ensureString(member.id),
+                    username: ensureString(member.user.tag),
+                    isVerified: true,
+                    expiresAt: expiresAt,
+                    verifiedAt: new Date(),
+                    verifiedBy: ensureString(interaction.user.id)
+                }},
+                { upsert: true }
+            );
 
-        const { commandName } = interaction;
+            verifiedUsersCache.set(ensureString(member.id), { userId: ensureString(member.id), isVerified: true, expiresAt: expiresAt });
 
-        // --- /verify Command Logic (Admin only, verifies by user ID, with duration) ---
-        if (commandName === 'verify') {
-            if (!isAuthorizedAdmin(ensureString(interaction.user.id))) {
-                await interaction.reply({ content: 'You do not have permission to use this command. Only designated administrators can verify users.', flags: [MessageFlags.Ephemeral] });
-                return;
-            }
 
-            const targetUser = interaction.options.getUser('user') || interaction.user;
-            console.log(`[DEBUG /verify] targetUser: ${ensureString(targetUser ? targetUser.tag : 'null/undefined')} (ID: ${ensureString(targetUser ? targetUser.id : 'N/A')})`);
-
-            const durationOption = interaction.options.getString('duration');
-
-            const member = interaction.guild.members.cache.get(ensureString(targetUser.id)); // ensure targetUser.id is a string
-            console.log(`[DEBUG /verify] member from cache: ${ensureString(member ? member.user.tag : 'null/undefined')} (ID: ${ensureString(member ? member.id : 'N/A')})`);
-
-            if (!member) {
-                await interaction.reply({ content: 'Could not find that user in this server. Please ensure the ID is correct or the user is in the server.', flags: [MessageFlags.Ephemeral] });
-                return;
-            }
-
-            let expiresAt = null;
-            let durationTextForDM = "Permanent access";
-
-            if (durationOption !== 'permanent') {
-                const days = parseInt(durationOption.replace('d', ''), 10);
-                if (!isNaN(days) && days > 0) {
-                    expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-                    durationTextForDM = `Access for ${days} Days (until ${expiresAt.toLocaleDateString()})`;
-                } else {
-                    await interaction.reply({ content: 'Invalid duration specified. Please use "permanent", "7d", "30d", "90d", or "365d".', flags: [MessageFlags.Ephemeral] });
-                    return;
-                }
-            }
+            await interaction.reply({ content: `${ensureString(member.user.tag)} has been verified! They can now use the \`/predict\` command.`, ephemeral: false });
 
             try {
-                const db = clientDB.db('MineBotDB'); // <--- REPLACE THIS WITH YOUR ACTUAL DATABASE NAME!
-                const collection = db.collection('verifiedUsers');
-
-                await collection.updateOne(
-                    { userId: ensureString(member.id) }, // Ensure ID is string
-                    { $set: {
-                        userId: ensureString(member.id),
-                        username: ensureString(member.user.tag),
-                        isVerified: true,
-                        expiresAt: expiresAt,
-                        verifiedAt: new Date(),
-                        verifiedBy: ensureString(interaction.user.id)
-                    }},
-                    { upsert: true }
-                );
-
-                verifiedUsersCache.set(ensureString(member.id), { userId: ensureString(member.id), isVerified: true, expiresAt: expiresAt });
-
-
-                await interaction.reply({ content: `${ensureString(member.user.tag)} has been verified! They can now use the \`/predict\` command.`, ephemeral: false });
-
-                try {
-                    await member.send(verificationSuccessfulDM(ensureString(member.user.username), ensureString(durationTextForDM))); // Ensured strings
-                    console.log(`Sent verification successful DM to ${ensureString(member.user.tag)}`);
-                } catch (dmError) {
-                    console.error(`Could not send verification successful DM to ${ensureString(member.user.tag)}. Error: ${ensureString(dmError.message)}. They might have DMs disabled.`, dmError);
-                    await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${ensureString(member.user.tag)} with important information, but their DMs might be disabled. Error: ${ensureString(dmError.message)})`, ephemeral: false });
-                }
-
-            } catch (error) {
-                console.error('Error during verification:', ensureString(error.message));
-                await interaction.reply({ content: 'An error occurred during verification. Please try again or contact an admin.', flags: [MessageFlags.Ephemeral] });
+                await member.send(verificationSuccessfulDM(ensureString(member.user.username), ensureString(durationTextForDM))); // Ensured strings
+                console.log(`Sent verification successful DM to ${ensureString(member.user.tag)}`);
+            } catch (dmError) {
+                console.error(`Could not send verification successful DM to ${ensureString(member.user.tag)}. Error: ${ensureString(dmError.message)}. They might have DMs disabled.`, dmError);
+                await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${ensureString(member.user.tag)} with important information, but their DMs might be disabled. Error: ${ensureString(dmError.message)})`, ephemeral: false });
             }
+
+        } catch (error) {
+            console.error('Error during verification:', ensureString(error.message));
+            await interaction.reply({ content: 'An error occurred during verification. Please try again or contact an admin.', flags: [MessageFlags.Ephemeral] });
+        }
+    }
+
+    // --- /admin subcommand group logic ---
+    if (commandName === 'admin') {
+        if (!isAuthorizedAdmin(ensureString(interaction.user.id))) {
+            await interaction.reply({ content: 'You do not have permission to use admin commands.', flags: [MessageFlags.Ephemeral] });
+            return;
         }
 
-        // --- /admin subcommand group logic ---
-        if (commandName === 'admin') {
-            if (!isAuthorizedAdmin(ensureString(interaction.user.id))) {
-                await interaction.reply({ content: 'You do not have permission to use admin commands.', flags: [MessageFlags.Ephemeral] });
-                return;
-            }
+        const subCommand = interaction.options.getSubcommand();
 
-            const subCommand = interaction.options.getSubcommand();
+        if (subCommand === 'revoke') {
+            // PASTE YOUR EXISTING LOGIC FOR /ADMIN REVOKE HERE
+            await interaction.reply({ content: 'Admin: User access revoked (placeholder).', flags: [MessageFlags.Ephemeral] });
+        } else if (subCommand === 'stats') {
+            // PASTE YOUR EXISTING LOGIC FOR /ADMIN STATS HERE
+            await interaction.reply({ content: 'Admin: Bot stats displayed (placeholder).', ephemeral: false });
+        } else if (subCommand === 'unban') {
+            // PASTE YOUR EXISTING LOGIC FOR /ADMIN UNBAN HERE
+            await interaction.reply({ content: 'Admin: User unbanned from submitting results (placeholder).', flags: [MessageFlags.Ephemeral] });
+        }
+    }
 
-            if (subCommand === 'revoke') {
-                // PASTE YOUR EXISTING LOGIC FOR /ADMIN REVOKE HERE
-                await interaction.reply({ content: 'Admin: User access revoked (placeholder).', flags: [MessageFlags.Ephemeral] });
-            } else if (subCommand === 'stats') {
-                // PASTE YOUR EXISTING LOGIC FOR /ADMIN STATS HERE
-                await interaction.reply({ content: 'Admin: Bot stats displayed (placeholder).', ephemeral: false });
-            } else if (subCommand === 'unban') {
-                // PASTE YOUR EXISTING LOGIC FOR /ADMIN UNBAN HERE
-                await interaction.reply({ content: 'Admin: User unbanned from submitting results (placeholder).', flags: [MessageFlags.Ephemeral] });
-            }
+    // --- /emergency subcommand group logic ---
+    if (commandName === 'emergency') {
+        if (!isAuthorizedAdmin(ensureString(interaction.user.id))) {
+            await interaction.reply({ content: 'You do not have permission to use emergency commands.', flags: [MessageFlags.Ephemeral] });
+            return;
         }
 
-        // --- /emergency subcommand group logic ---
-        if (commandName === 'emergency') {
-            if (!isAuthorizedAdmin(ensureString(interaction.user.id))) {
-                await interaction.reply({ content: 'You do not have permission to use emergency commands.', flags: [MessageFlags.Ephemeral] });
-                return;
-            }
+        const subCommand = interaction.options.getSubcommand();
 
-            const subCommand = interaction.options.getSubcommand();
-
-            if (subCommand === 'verify') {
-                // PASTE YOUR EXISTING LOGIC FOR /EMERGENCY VERIFY HERE
-                await interaction.reply({ content: 'Emergency: User force verified (placeholder).', flags: [MessageFlags.Ephemeral] });
-            }
+        if (subCommand === 'verify') {
+            // PASTE YOUR EXISTING LOGIC FOR /EMERGENCY VERIFY HERE
+            await interaction.reply({ content: 'Emergency: User force verified (placeholder).', flags: [MessageFlags.Ephemeral] });
         }
+    }
 
-        // --- /how_to_submit_result Command Logic ---
-        if (commandName === 'how_to_submit_result') {
-            const helpMessage = `
+    // --- /how_to_submit_result Command Logic ---
+    if (commandName === 'how_to_submit_result') {
+        const helpMessage = `
 **How to Submit a Game Result** 📝
 
 Why submit a result? Your submissions help train the prediction model, making it more accurate for everyone. ✨
@@ -752,4 +756,3 @@ Why submit a result? Your submissions help train the prediction model, making it
         }
     })();
     */
-    
