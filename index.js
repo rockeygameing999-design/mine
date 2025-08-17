@@ -304,7 +304,8 @@ client.on('interactionCreate', async interaction => {
             return;
         }
 
-        const targetUser = interaction.options.getUser('user'); // Get the user to verify from the option
+        // Fix: Ensure targetUser is always a valid User object by defaulting to interaction.user
+        const targetUser = interaction.options.getUser('user') || interaction.user; // Get the user to verify from the option or default to the command invoker
         const durationOption = interaction.options.getString('duration'); // Get duration: 'permanent', '7d', etc.
 
         const member = interaction.guild.members.cache.get(targetUser.id);
