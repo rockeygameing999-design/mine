@@ -17,7 +17,7 @@ function isAuthorizedAdmin(userId) {
     return ADMIN_USER_IDS.includes(userId);
 }
 
-// --- DEFENSIVE STRING HANDLING (NEW) ---
+// --- DEFENSIVE STRING HANDLING ---
 // Ensures a value is a string, preventing 'Cannot read properties of null (reading 'replace')'
 function ensureString(value) {
     if (value === null || value === undefined) {
@@ -222,14 +222,9 @@ const client = new Client({
 });
 
 // --- HTTP SERVER SETUP (REQUIRED for Render Web Service health check) ---
-// If you intend to run this as a "Web Service" on Render (e.g., for the free tier),
-// you MUST have an HTTP server listening on the port provided by Render.
-// If you do NOT want a web server (and prefer a pure background worker),
-// you would need to switch to Render's "Background Worker" service type (which is usually a paid feature).
 const app = express();
-const PORT = process.env.PORT || 10000; // Use Render's provided PORT env var, or fallback
+const PORT = process.env.PORT || 10000;
 
-// Basic root endpoint for Render's health check or a simple web dashboard
 app.get('/', (req, res) => {
     res.send('Bot is running and healthy!');
 });
@@ -239,34 +234,8 @@ app.listen(PORT, () => {
 });
 
 
-// --- GLOBAL MESSAGE CONTENT CONSTANTS (NOW FUNCTIONS FOR ROBUSTNESS) ---
-// Changed to a function to prevent 'null' issues with .replace() on the constant itself
-const getWelcomeAndWarningMessage = (username) => `
-Hello ${ensureString(username)}, welcome to the community!
-
-# 🔮 Why Trust Our Bot?
-> **Our bot is a community tool for data validation and analysis for Rollbet's Mines game. We are not a scam or a source of guaranteed wins. Our purpose is to prove the game is truly random and to help improve community understanding.**
-
-# ✅ How It Works:
-> **Use /predict to see what our bot's data analysis says about game outcomes. This is for research only and does not guarantee a win.**
-> **Submit game results with /submitresult (open to everyone) to help improve data accuracy.**
-> **Check your contributions with /myresults and compete on the /leaderboard!**
-
-# 🌟 Transparency & Fairness:
-> **We use Rollbet’s provably fair system (server seed, nonce) to ensure all game outcomes are verifiable. All submissions are analyzed to enhance our data, and you can really see the fairness for yourself.**
-
-# 🎁 FREE ACCESS
-> **Share your mines result to us by using /submitresult and win free access**
-> **Participate in giveaway**
-
----
-
-**Important Warnings:**
-1.  **Fake Reports:** Do NOT submit fake reports. Our bot automatically detects and verifies results. Submitting fake reports will result in an immediate ban.
-
-Please make sure to read and follow these rules. Enjoy your time here!
-`;
-
+// --- GLOBAL MESSAGE CONTENT TEMPLATES ---
+// These are now defined as functions or template literals directly where they make sense
 const verificationSuccessfulDM = (username, durationText) => `
 **Verification Successful!** 🎉
 
@@ -310,11 +279,8 @@ client.on('ready', async () => {
     await loadInitialVerifiedUsersCache();
 
     // --- Start Self-Ping System when bot is ready ---
-    // This will send a request to the bot's own URL to keep it awake on Render's free tier.
-    // Ensure SELF_PING_URL is correctly configured at the top of the file.
     if (SELF_PING_URL) {
         console.log(`Starting self-ping system. Pinging ${SELF_PING_URL} every ${PING_INTERVAL_MS / 1000 / 60} minutes.`);
-        // Call immediately on start, then set interval
         startSelfPing();
         setInterval(startSelfPing, PING_INTERVAL_MS);
     } else {
@@ -326,8 +292,32 @@ client.on('ready', async () => {
 client.on('guildMemberAdd', async member => {
     console.log(`New member joined: ${ensureString(member.user.tag)} (${ensureString(member.id)})`);
     try {
-        // Call the message function to get the personalized string
-        const personalizedWelcomeMessage = getWelcomeAndWarningMessage(member.user.username);
+        // Defining the message directly within the event handler for ultimate robustness
+        const personalizedWelcomeMessage = `
+Hello ${ensureString(member.user.username)}, welcome to the community!
+
+# 🔮 Why Trust Our Bot?
+> **Our bot is a community tool for data validation and analysis for Rollbet's Mines game. We are not a scam or a source of guaranteed wins. Our purpose is to prove the game is truly random and to help improve community understanding.**
+
+# ✅ How It Works:
+> **Use /predict to see what our bot's data analysis says about game outcomes. This is for research only and does not guarantee a win.**
+> **Submit game results with /submitresult (open to everyone) to help improve data accuracy.**
+> **Check your contributions with /myresults and compete on the /leaderboard!**
+
+# 🌟 Transparency & Fairness:
+> **We use Rollbet’s provably fair system (server seed, nonce) to ensure all game outcomes are verifiable. All submissions are analyzed to enhance our data, and you can really see the fairness for yourself.**
+
+# 🎁 FREE ACCESS
+> **Share your mines result to us by using /submitresult and win free access**
+> **Participate in giveaway**
+
+---
+
+**Important Warnings:**
+1.  **Fake Reports:** Do NOT submit fake reports. Our bot automatically detects and verifies results. Submitting fake reports will result in an immediate ban.
+
+Please make sure to read and follow these rules. Enjoy your time here!
+`;
         await member.send(personalizedWelcomeMessage);
         console.log(`Sent welcome DM to new member: ${ensureString(member.user.tag)}`);
     } catch (error) {
@@ -353,7 +343,7 @@ client.on('interactionCreate', async interaction => {
 
         const durationOption = interaction.options.getString('duration');
 
-        const member = interaction.guild.members.cache.get(ensureString(targetUser.id)); // ensure targetUser.id is a string
+        const member = interaction.guild.members.cache.get(ensureString(targetUser.id));
         console.log(`[DEBUG /verify] member from cache: ${ensureString(member ? member.user.tag : 'null/undefined')} (ID: ${ensureString(member ? member.id : 'N/A')})`);
 
         if (!member) {
