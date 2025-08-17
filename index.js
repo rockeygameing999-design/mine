@@ -136,7 +136,6 @@ async function connectToMongoDB() {
     console.log(`[DEBUG] connectToMongoDB function called. MONGO_URI: ${MONGO_URI ? 'Set' : 'Not Set'}`);
     if (!MONGO_URI) {
         console.error('MONGO_URI environment variable is not set. Cannot connect to MongoDB.');
-        // Exit is now done in the main execution block if MONGO_URI is critical.
         throw new Error("MongoDB URI is not set."); // Throw to be caught by main catch block
     }
     try {
@@ -271,7 +270,7 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.DirectMessages,
-        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildMembers, // Crucial for member fetching and caching
         GatewayIntentBits.MessageContent,
     ],
     partials: [Partials.Channel, Partials.Message, Partials.GuildMember],
@@ -292,13 +291,11 @@ app.listen(PORT, () => {
 // --- GLOBAL ERROR HANDLING (CRITICAL FOR DEBUGGING UNCAUGHT ERRORS) ---
 process.on('unhandledRejection', (reason, promise) => {
     console.error(`[FATAL ERROR] Unhandled Rejection at: ${promise}\nReason: ${ensureString(reason?.message || reason)}`, reason);
-    // Consider graceful shutdown or restarting the process here in a production environment
     process.exit(1); // Exit to force a restart on Render if an unhandled promise rejection occurs
 });
 
 process.on('uncaughtException', (err) => {
     console.error(`[FATAL ERROR] Uncaught Exception: ${ensureString(err.message)}`, err);
-    // Consider graceful shutdown or restarting the process here in a production environment
     process.exit(1); // Exit to force a restart on Render if an uncaught synchronous exception occurs
 });
 
@@ -356,17 +353,15 @@ process.on('uncaughtException', (err) => {
         if (interaction.isCommand() && !interaction.deferred && !interaction.replied) {
             try {
                 await interaction.deferReply({ ephemeral: false }); // Defer to buy time, not always ephemeral
-                console.log(`[DEBUG] Deferred reply for command: /${interaction.commandName} by ${ensureString(interaction.user.tag)}`);
+                console.log(`[DEBUG] Deferred reply for command: /${ensureString(interaction.commandName)} by ${ensureString(interaction.user.tag)}`);
             } catch (deferError) {
-                console.error(`[ERROR] Failed to defer reply for command /${interaction.commandName}: ${ensureString(deferError.message)}`, deferError);
-                // If defer fails, we might be too late or have a permissions issue.
-                // Try a direct reply as a last resort, though it might time out.
+                console.error(`[ERROR] Failed to defer reply for command /${ensureString(interaction.commandName)}: ${ensureString(deferError.message)}`, deferError);
                 try {
                     if (!interaction.replied) {
-                         await interaction.reply({ content: 'An unexpected issue occurred. Please try again.', ephemeral: true });
+                         await interaction.reply({ content: 'An unexpected issue occurred. Please try again.', ephemeral: true }).catch(err => console.error(`[ERROR] Failed fallback reply (defer fail): ${ensureString(err.message)}`));
                     }
                 } catch (fallbackError) {
-                    console.error(`[ERROR] Failed to send fallback reply for /${interaction.commandName}: ${ensureString(fallbackError.message)}`, fallbackError);
+                    console.error(`[ERROR] Failed to send fallback reply for /${ensureString(interaction.commandName)}: ${ensureString(fallbackError.message)}`, fallbackError);
                 }
                 return; // Stop processing this interaction if deferal failed
             }
@@ -386,17 +381,38 @@ process.on('uncaughtException', (err) => {
                     return;
                 }
 
-                const targetUser = interaction.options.getUser('user');
-                if (!targetUser) {
-                    await interaction.editReply({ content: 'Target user not found. Please provide a valid user.', flags: [MessageFlags.Ephemeral] });
+                const targetUserDiscordObject = interaction.options.getUser('user'); // This is Discord.User object, not necessarily a guild member
+                console.log(`[DEBUG /verify] Initial targetUserDiscordObject: ${targetUserDiscordObject ? targetUserDiscordObject.tag : 'null/undefined'} (ID: ${targetUserDiscordObject ? targetUserDiscordObject.id : 'N/A'})`);
+
+                if (!targetUserDiscordObject) {
+                    await interaction.editReply({ content: 'Target user not found in command options. Please provide a valid user.', flags: [MessageFlags.Ephemeral] });
                     return;
+                }
+                const targetUserId = ensureString(targetUserDiscordObject.id);
+
+                console.log(`[DEBUG /verify] Resolved targetUserId from options: ${targetUserId}`);
+
+                let member = interaction.guild?.members.cache.get(targetUserId);
+                console.log(`[DEBUG /verify] Member from cache: ${member ? member.user.tag : 'null/undefined'} (ID: ${member ? member.id : 'N/A'})`);
+
+
+                if (!member && interaction.guild) {
+                    console.log(`[DEBUG /verify] Member ${targetUserId} not in cache, attempting to fetch from API for guild ${ensureString(interaction.guild.id)}.`);
+                    try {
+                        member = await interaction.guild.members.fetch(targetUserId);
+                        console.log(`[DEBUG /verify] Successfully fetched member ${member.user.tag} (ID: ${member.id}) from API.`);
+                    } catch (fetchError) {
+                        console.error(`[ERROR] /verify: Failed to fetch member ${targetUserId} from API: ${ensureString(fetchError.message)}`, fetchError);
+                        member = null; // Ensure member is null if fetch fails
+                    }
                 }
 
-                const member = interaction.guild?.members.cache.get(ensureString(targetUser.id));
                 if (!member) {
-                    await interaction.editReply({ content: 'Could not find that user in this server. Please ensure the ID is correct or the user is in the server.', flags: [MessageFlags.Ephemeral] });
+                    await interaction.editReply({ content: `Could not find user with ID ${targetUserId} in this server. Please ensure the user is in this server and the ID is correct.`, flags: [MessageFlags.Ephemeral] });
                     return;
                 }
+                console.log(`[DEBUG] /verify: Final member found: ${ensureString(member.user.tag)} (ID: ${ensureString(member.id)})`);
+
 
                 const durationOption = interaction.options.getString('duration');
                 let expiresAt = null;
@@ -507,11 +523,6 @@ process.on('uncaughtException', (err) => {
                 }
 
                 const subCommand = interaction.options.getSubcommand();
-                if (!dbClient || !dbClient.db) {
-                     await interaction.editReply({ content: 'Database is not connected. Please inform the bot administrator.', flags: [MessageFlags.Ephemeral] });
-                     console.error(`[ERROR] /emergency command failed: MongoDB client not available.`);
-                     return;
-                }
 
                 if (subCommand === 'verify') {
                     const targetUser = interaction.options.getUser('user');
@@ -616,34 +627,39 @@ Why submit a result? Your submissions help train the prediction model, making it
                     return;
                 }
 
-                const computedMines = calculateRollbetMines(serverSeedHash, clientSeed, nonce, numMines);
-                const sortedSubmittedMines = [...minePositions].sort((a, b) => a - b);
-                const sortedComputedMines = [...computedMines].sort((a, b) => a - b);
+                try {
+                    const computedMines = calculateRollbetMines(serverSeedHash, clientSeed, nonce, numMines);
+                    const sortedSubmittedMines = [...minePositions].sort((a, b) => a - b);
+                    const sortedComputedMines = [...computedMines].sort((a, b) => a - b);
 
-                if (JSON.stringify(sortedSubmittedMines) === JSON.stringify(sortedComputedMines)) {
-                    if (!dbClient || !dbClient.db) {
-                         await interaction.editReply({ content: 'Database is not connected. Please inform the bot administrator.', flags: [MessageFlags.Ephemeral] });
-                         console.error(`[ERROR] /submitresult command failed: MongoDB client not available.`);
-                         return;
+                    if (JSON.stringify(sortedSubmittedMines) === JSON.stringify(sortedComputedMines)) {
+                        if (!dbClient || !dbClient.db) {
+                             await interaction.editReply({ content: 'Database is not connected. Please inform the bot administrator.', flags: [MessageFlags.Ephemeral] });
+                             console.error(`[ERROR] /submitresult command failed: MongoDB client not available.`);
+                             return;
+                        }
+                        const db = dbClient.db('MineBotDB');
+                        const collection = db.collection('gameResults');
+
+                        await collection.insertOne({
+                            userId: userId,
+                            username: userTag,
+                            serverSeedHash,
+                            clientSeed,
+                            nonce,
+                            numMines,
+                            minePositions: sortedSubmittedMines,
+                            submittedAt: new Date(),
+                            isValidated: true
+                        });
+
+                        await interaction.editReply({ content: '✅ Your game result has been successfully submitted and validated! It will now contribute to our community data.', flags: [MessageFlags.Ephemeral] });
+                    } else {
+                        await interaction.editReply({ content: '❌ Submitted mine positions do not match the computed game outcome or are invalid. Please double-check your input and ensure your algorithm for Rollbet\'s provably fair system is **exactly** correct if you are developing it.', flags: [MessageFlags.Ephemeral] });
                     }
-                    const db = dbClient.db('MineBotDB');
-                    const collection = db.collection('gameResults');
-
-                    await collection.insertOne({
-                        userId: userId,
-                        username: userTag,
-                        serverSeedHash,
-                        clientSeed,
-                        nonce,
-                        numMines,
-                        minePositions: sortedSubmittedMines,
-                        submittedAt: new Date(),
-                        isValidated: true
-                    });
-
-                    await interaction.editReply({ content: '✅ Your game result has been successfully submitted and validated! It will now contribute to our community data.', flags: [MessageFlags.Ephemeral] });
-                } else {
-                    await interaction.editReply({ content: '❌ Submitted mine positions do not match the computed game outcome or are invalid. Please double-check your input and ensure your algorithm for Rollbet\'s provably fair system is **exactly** correct if you are developing it.', flags: [MessageFlags.Ephemeral] });
+                } catch (error) {
+                    console.error('Error in /submitresult validation or storage:', ensureString(error.message));
+                    await interaction.editReply({ content: 'An unexpected error occurred while processing your submission. Please try again or contact an admin.', flags: [MessageFlags.Ephemeral] });
                 }
             }
 
@@ -684,8 +700,6 @@ Why submit a result? Your submissions help train the prediction model, making it
                     return;
                 }
 
-                // Removed deferReply from here as it's now at the very top of interactionCreate
-
                 const recentGameResults = await gameResultsCollection.find({})
                                                              .sort({ submittedAt: -1 })
                                                              .limit(50)
@@ -707,8 +721,7 @@ Why submit a result? Your submissions help train the prediction model, making it
                 await interaction.editReply({ content: `**🤖 AI Data Analysis from Latest Submissions:**\n\n${aiAnalysis}`, ephemeral: false });
             }
         } catch (error) {
-            console.error(`[ERROR] Error handling command '${commandName}' for user ${userTag} (${userId}):`, ensureString(error.message), error);
-            // This fallback reply is critical if an error occurs *after* deferring.
+            console.error(`[ERROR] Error handling command '${ensureString(commandName)}' for user ${ensureString(userTag)} (${ensureString(userId)}):`, ensureString(error.message), error);
             if (interaction.deferred || interaction.replied) {
                 await interaction.editReply({ content: 'An unexpected error occurred while processing your command. Please try again later.', flags: [MessageFlags.Ephemeral] }).catch(err => console.error(`[ERROR] Failed to send error editReply: ${ensureString(err.message)}`, err));
             } else {
@@ -863,22 +876,21 @@ const commands = [
     },
 ];
 
-const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
+const rest = new REST({ version: '10' }).setToken(process.env.BOT_TOKEN);
 
 (async () => {
     try {
         console.log('Started refreshing application (/) commands.');
-        // IMPORTANT: Replace 'YOUR_CLIENT_ID' with your bot's Client ID from Discord Developer Portal.
-        // For guild-specific commands (faster updates), also uncomment and replace 'YOUR_GUILD_ID'.
+        // REPLACE 'YOUR_CLIENT_ID' and optionally 'YOUR_GUILD_ID' below!
         await rest.put(
              Routes.applicationCommands('YOUR_CLIENT_ID'), // Global commands
-             // Routes.applicationGuildCommands('YOUR_CLIENT_ID', 'YOUR_GUILD_ID'), // Guild-specific commands
+             // Routes.applicationGuildCommands('YOUR_CLIENT_ID', 'YOUR_GUILD_ID'), // Guild-specific commands (faster updates)
              { body: commands },
          );
 
         console.log('Successfully reloaded application (/) commands.');
     } catch (error) {
-        console.error('Failed to register slash commands:', ensureString(error.message));
+        console.error('Failed to register slash commands:', error.message);
     }
 })();
 */
