@@ -1,5 +1,5 @@
 // Required Discord.js and MongoDB modules
-import { Client, GatewayIntentBits, Partials, PermissionFlagsBits, MessageFlags } from 'discord.js'; // Added MessageFlags
+import { Client, GatewayIntentBits, Partials, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { MongoClient } from 'mongodb';
 import { REST, Routes } from 'discord.js'; // For registering slash commands
 // You will likely need Node.js's built-in 'crypto' module for provably fair calculations.
@@ -300,40 +300,43 @@ client.on('interactionCreate', async interaction => {
     if (commandName === 'verify') {
         // Check if the command issuer is one of the authorized admins
         if (!isAuthorizedAdmin(interaction.user.id)) {
-            await interaction.reply({ content: 'You do not have permission to use this command. Only designated administrators can verify users.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+            await interaction.reply({ content: 'You do not have permission to use this command. Only designated administrators can verify users.', flags: [MessageFlags.Ephemeral] });
             return;
         }
 
         // Fix: Ensure targetUser is always a valid User object by defaulting to interaction.user
-        const targetUser = interaction.options.getUser('user') || interaction.user; // Get the user to verify from the option or default to the command invoker
-        console.log('targetUser in /verify:', targetUser); // Added for debugging
+        // If the slash command's 'user' option is marked as 'required: true', this fallback is technically not needed
+        // as Discord will ensure a user is provided. However, it's good defensive programming.
+        const targetUser = interaction.options.getUser('user') || interaction.user;
+        console.log(`[DEBUG /verify] targetUser: ${targetUser ? targetUser.tag : 'null/undefined'} (ID: ${targetUser ? targetUser.id : 'N/A'})`); // Added detailed debug log
 
-        const durationOption = interaction.options.getString('duration'); // Get duration: 'permanent', '7d', etc.
+        const durationOption = interaction.options.getString('duration');
 
         const member = interaction.guild.members.cache.get(targetUser.id);
+        console.log(`[DEBUG /verify] member from cache: ${member ? member.user.tag : 'null/undefined'} (ID: ${member ? member.id : 'N/A'})`); // Added detailed debug log
 
         if (!member) {
-            await interaction.reply({ content: 'Could not find that user in this server. Please ensure the ID is correct or the user is in the server.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+            await interaction.reply({ content: 'Could not find that user in this server. Please ensure the ID is correct or the user is in the server.', flags: [MessageFlags.Ephemeral] });
             return;
         }
 
-        let expiresAt = null; // Default to permanent
-        let durationTextForDM = "Permanent access"; // Text for the verification successful DM
+        let expiresAt = null;
+        let durationTextForDM = "Permanent access";
 
         if (durationOption !== 'permanent') {
             const days = parseInt(durationOption.replace('d', ''), 10);
             if (!isNaN(days) && days > 0) {
-                expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000); // Calculate expiration date
+                expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
                 durationTextForDM = `Access for ${days} Days (until ${expiresAt.toLocaleDateString()})`;
             } else {
-                await interaction.reply({ content: 'Invalid duration specified. Please use "permanent", "7d", "30d", "90d", or "365d".', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+                await interaction.reply({ content: 'Invalid duration specified. Please use "permanent", "7d", "30d", "90d", or "365d".', flags: [MessageFlags.Ephemeral] });
                 return;
             }
         }
 
         try {
             const db = clientDB.db('MineBotDB'); // <--- REPLACE THIS WITH YOUR ACTUAL DATABASE NAME!
-            const collection = db.collection('verifiedUsers'); // Ensure this collection exists
+            const collection = db.collection('verifiedUsers');
 
             await collection.updateOne(
                 { userId: member.id },
@@ -341,39 +344,36 @@ client.on('interactionCreate', async interaction => {
                     userId: member.id,
                     username: member.user.tag,
                     isVerified: true,
-                    expiresAt: expiresAt, // Store null for permanent, date for time-based
+                    expiresAt: expiresAt,
                     verifiedAt: new Date(),
-                    verifiedBy: interaction.user.id // Track which admin verified them
+                    verifiedBy: interaction.user.id
                 }},
-                { upsert: true } // Create a new document if one doesn't exist for the user
+                { upsert: true }
             );
 
-            // Update local cache as well (ensure it's consistent with DB)
             verifiedUsersCache.set(member.id, { userId: member.id, isVerified: true, expiresAt: expiresAt });
 
 
             await interaction.reply({ content: `${member.user.tag} has been verified! They can now use the \`/predict\` command.`, ephemeral: false });
 
-            // --- Send the NEW Verification Successful DM with warnings ---
             try {
                 await member.send(verificationSuccessfulDM(member.user.username, durationTextForDM));
                 console.log(`Sent verification successful DM to ${member.user.tag}`);
             } catch (dmError) {
                 console.error(`Could not send verification successful DM to ${member.user.tag}. They might have DMs disabled.`, dmError);
-                await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${member.user.tag} with important information, but their DMs might be disabled.)`, ephemeral: false }); // Kept ephemeral true here if followUp is still desired to be ephemeral
+                await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${member.user.tag} with important information, but their DMs might be disabled.)`, ephemeral: false });
             }
 
         } catch (error) {
             console.error('Error during verification:', error.message);
-            await interaction.reply({ content: 'An error occurred during verification. Please try again or contact an admin.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+            await interaction.reply({ content: 'An error occurred during verification. Please try again or contact an admin.', flags: [MessageFlags.Ephemeral] });
         }
     }
 
     // --- /admin subcommand group logic ---
     if (commandName === 'admin') {
-        // Check if the command issuer is one of the authorized admins
         if (!isAuthorizedAdmin(interaction.user.id)) {
-            await interaction.reply({ content: 'You do not have permission to use admin commands.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+            await interaction.reply({ content: 'You do not have permission to use admin commands.', flags: [MessageFlags.Ephemeral] });
             return;
         }
 
@@ -381,29 +381,20 @@ client.on('interactionCreate', async interaction => {
 
         if (subCommand === 'revoke') {
             // PASTE YOUR EXISTING LOGIC FOR /ADMIN REVOKE HERE
-            // This should revoke a user's access to prediction service (e.g., by setting isVerified: false or removing expiresAt)
-            // Example: const userToRevoke = interaction.options.getUser('user');
-            // const db = clientDB.db('MineBotDB');
-            // await db.collection('verifiedUsers').updateOne({ userId: userToRevoke.id }, { $set: { isVerified: false, expiresAt: new Date() } });
-            // verifiedUsersCache.delete(userToRevoke.id); // Remove from cache
-            await interaction.reply({ content: 'Admin: User access revoked (placeholder).', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+            await interaction.reply({ content: 'Admin: User access revoked (placeholder).', flags: [MessageFlags.Ephemeral] });
         } else if (subCommand === 'stats') {
             // PASTE YOUR EXISTING LOGIC FOR /ADMIN STATS HERE
-            // This should display bot statistics (e.g., number of verified users, total submissions)
             await interaction.reply({ content: 'Admin: Bot stats displayed (placeholder).', ephemeral: false });
         } else if (subCommand === 'unban') {
             // PASTE YOUR EXISTING LOGIC FOR /ADMIN UNBAN HERE
-            // This should unban a user from submitting results (if you have a separate ban system)
-            // Example: const userToUnban = interaction.options.getUser('user');
-            await interaction.reply({ content: 'Admin: User unbanned from submitting results (placeholder).', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+            await interaction.reply({ content: 'Admin: User unbanned from submitting results (placeholder).', flags: [MessageFlags.Ephemeral] });
         }
     }
 
     // --- /emergency subcommand group logic ---
     if (commandName === 'emergency') {
-        // Check if the command issuer is one of the authorized admins
         if (!isAuthorizedAdmin(interaction.user.id)) {
-            await interaction.reply({ content: 'You do not have permission to use emergency commands.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+            await interaction.reply({ content: 'You do not have permission to use emergency commands.', flags: [MessageFlags.Ephemeral] });
             return;
         }
 
@@ -411,14 +402,12 @@ client.on('interactionCreate', async interaction => {
 
         if (subCommand === 'verify') {
             // PASTE YOUR EXISTING LOGIC FOR /EMERGENCY VERIFY HERE
-            // This would likely involve similar logic to /verify, but might bypass some strict checks
-            // Example: const userToForceVerify = interaction.options.getUser('user');
-            await interaction.reply({ content: 'Emergency: User force verified (placeholder).', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+            await interaction.reply({ content: 'Emergency: User force verified (placeholder).', flags: [MessageFlags.Ephemeral] });
         }
     }
 
     // --- /how_to_submit_result Command Logic ---
-    if (commandName === 'how_to_submit_result') { // Renamed for valid slash command format
+    if (commandName === 'how_to_submit_result') {
         const helpMessage = `
 **How to Submit a Game Result** 📝
 
@@ -437,21 +426,19 @@ Why submit a result? Your submissions help train the prediction model, making it
 
 **Remember to paste your exact data for best results!** 🎯
         `;
-        await interaction.reply({ content: helpMessage, flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+        await interaction.reply({ content: helpMessage, flags: [MessageFlags.Ephemeral] });
     }
 
     // --- /leaderboard Command Logic ---
     if (commandName === 'leaderboard') {
         // PASTE YOUR EXISTING LOGIC FOR /LEADERBOARD HERE
-        // Logic to show users who submitted the most results
         await interaction.reply({ content: 'Leaderboard: Top submitters displayed (placeholder).', ephemeral: false });
     }
 
     // --- /myresult Command Logic ---
     if (commandName === 'myresult') {
         // PASTE YOUR EXISTING LOGIC FOR /MYRESULT HERE
-        // Logic to show how many results the user has submitted
-        await interaction.reply({ content: 'My Results: Your submission count displayed (placeholder).', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+        await interaction.reply({ content: 'My Results: Your submission count displayed (placeholder).', flags: [MessageFlags.Ephemeral] });
     }
 
     // --- /submitresult Command Logic ---
@@ -464,31 +451,19 @@ Why submit a result? Your submissions help train the prediction model, making it
 
         const minePositions = minePositionsString.split(',').map(pos => parseInt(pos.trim(), 10));
 
-        // Basic validation for mine positions input
         if (minePositions.length !== numMines || minePositions.some(isNaN) || minePositions.some(pos => pos < 0 || pos > 24) || new Set(minePositions).size !== numMines) {
-            await interaction.reply({ content: '❌ Invalid mine positions provided. Please ensure it\'s a comma-separated list of unique numbers between 0-24, and the count matches the "num_mines" option.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+            await interaction.reply({ content: '❌ Invalid mine positions provided. Please ensure it\'s a comma-separated list of unique numbers between 0-24, and the count matches the "num_mines" option.', flags: [MessageFlags.Ephemeral] });
             return;
         }
 
         try {
-            // --- CRITICAL VALIDATION STEP ---
-            // This calls YOUR implementation of Rollbet's algorithm.
-            // Note: If Rollbet requires the UNHASHED server seed for verification,
-            // the user would need to provide that after the game, or you'd need
-            // to fetch it (if Rollbet provides an API for that).
-            // For now, assuming `serverSeedHash` is used directly in `calculateRollbetMines`
-            // as the 'serverSeed' parameter, or that you're adapting your logic
-            // to handle the hashed seed if that's what's available client-side.
             const computedMines = calculateRollbetMines(serverSeedHash, clientSeed, nonce, numMines);
-
-            // Sort both arrays to ensure order doesn't affect comparison
             const sortedSubmittedMines = [...minePositions].sort((a, b) => a - b);
             const sortedComputedMines = [...computedMines].sort((a, b) => a - b);
 
             if (JSON.stringify(sortedSubmittedMines) === JSON.stringify(sortedComputedMines)) {
-                // Mines match - this is a valid submission. Store it.
                 const db = clientDB.db('MineBotDB'); // <--- REPLACE THIS WITH YOUR ACTUAL DATABASE NAME!
-                const collection = db.collection('gameResults'); // New collection for validated game results
+                const collection = db.collection('gameResults');
 
                 await collection.insertOne({
                     userId: interaction.user.id,
@@ -497,19 +472,18 @@ Why submit a result? Your submissions help train the prediction model, making it
                     clientSeed,
                     nonce,
                     numMines,
-                    minePositions: sortedSubmittedMines, // Store the validated, sorted positions
+                    minePositions: sortedSubmittedMines,
                     submittedAt: new Date(),
-                    isValidated: true // Mark as valid
+                    isValidated: true
                 });
 
-                await interaction.reply({ content: '✅ Your game result has been successfully submitted and validated! It will now contribute to our community data.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+                await interaction.reply({ content: '✅ Your game result has been successfully submitted and validated! It will now contribute to our community data.', flags: [MessageFlags.Ephemeral] });
             } else {
-                // Mines do NOT match - reject the submission
-                await interaction.reply({ content: '❌ Submitted mine positions do not match the computed game outcome or are invalid. Please double-check your input and ensure your algorithm for Rollbet\'s provably fair system is **exactly** correct if you are developing it.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+                await interaction.reply({ content: '❌ Submitted mine positions do not match the computed game outcome or are invalid. Please double-check your input and ensure your algorithm for Rollbet\'s provably fair system is **exactly** correct if you are developing it.', flags: [MessageFlags.Ephemeral] });
             }
         } catch (error) {
             console.error('Error in /submitresult validation or storage:', error.message);
-            await interaction.reply({ content: 'An unexpected error occurred while processing your submission. Please try again or contact an admin.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+            await interaction.reply({ content: 'An unexpected error occurred while processing your submission. Please try again or contact an admin.', flags: [MessageFlags.Ephemeral] });
         }
     }
 
@@ -518,25 +492,23 @@ Why submit a result? Your submissions help train the prediction model, making it
         const userId = interaction.user.id;
         const db = clientDB.db('MineBotDB'); // <--- REPLACE THIS WITH YOUR ACTUAL DATABASE NAME!
         const verifiedCollection = db.collection('verifiedUsers');
-        const gameResultsCollection = db.collection('gameResults'); // Get reference to game results
+        const gameResultsCollection = db.collection('gameResults');
 
         try {
             const userVerification = await verifiedCollection.findOne({ userId: userId });
 
             if (!userVerification || !userVerification.isVerified) {
-                await interaction.reply({ content: '🔒 You must be verified to use the \`/predict\` command. Please ask an admin to verify you, or share your game results via \`/submitresult\` to gain access!', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+                await interaction.reply({ content: '🔒 You must be verified to use the \`/predict\` command. Please ask an admin to verify you, or share your game results via \`/submitresult\` to gain access!', flags: [MessageFlags.Ephemeral] });
                 return;
             }
 
             if (userVerification.expiresAt && userVerification.expiresAt < new Date()) {
-                // Verification expired, update DB and notify user
                 await verifiedCollection.updateOne(
                     { userId: userId },
                     { $set: { isVerified: false, expiredAt: new Date() } }
                 );
-                verifiedUsersCache.delete(userId); // Remove from cache
+                verifiedUsersCache.delete(userId);
 
-                // --- Send the Access Expired DM ---
                 try {
                     await interaction.user.send(accessExpiredDM(interaction.user.username));
                     console.log(`Sent access expired DM to ${interaction.user.tag}`);
@@ -544,27 +516,23 @@ Why submit a result? Your submissions help train the prediction model, making it
                     console.error(`Could not send access expired DM to ${interaction.user.tag}. They might have DMs disabled.`, dmError);
                 }
 
-                await interaction.reply({ content: 'Expired! ⏳ Your data analysis access has expired. Please check your DMs for more information. Ask an admin to re-verify you or submit more results via \`/submitresult\` for free access!', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+                await interaction.reply({ content: 'Expired! ⏳ Your data analysis access has expired. Please check your DMs for more information. Ask an admin to re-verify you or submit more results via \`/submitresult\` for free access!', flags: [MessageFlags.Ephemeral] });
                 return;
             }
 
             // --- AI Analysis Section for /predict ---
-            await interaction.deferReply(); // Defer reply as AI call might take time
+            await interaction.deferReply();
 
-            // Fetch a sample of recent game results for AI analysis
-            // Adjust query as needed (e.g., specific numMines, timeframe)
             const recentGameResults = await gameResultsCollection.find({})
-                                                         .sort({ submittedAt: -1 }) // Sort by most recent
-                                                         .limit(50) // Get last 50 results
+                                                         .sort({ submittedAt: -1 })
+                                                         .limit(50)
                                                          .toArray();
 
             if (recentGameResults.length === 0) {
-                // If deferred, use editReply
                 await interaction.editReply({ content: 'No game results submitted yet for analysis. Please encourage users to use `/submitresult`!', ephemeral: false });
                 return;
             }
 
-            // Prepare data for the AI prompt
             let dataSummary = `Recent validated Rollbet Mines game results:\n`;
             recentGameResults.forEach((game, index) => {
                 dataSummary += `Game ${index + 1}: Mines: ${game.numMines}, Positions: [${game.minePositions.join(', ')}], Nonce: ${game.nonce}\n`;
@@ -577,8 +545,14 @@ Why submit a result? Your submissions help train the prediction model, making it
 
         } catch (error) {
             console.error('Error in /predict or AI analysis:', error.message);
-            // Since interaction was deferred, use editReply in catch block too
-            await interaction.editReply({ content: 'An error occurred while trying to generate AI analysis. Please try again later.', flags: [MessageFlags.Ephemeral] }); // Updated ephemeral
+            // Ensure this uses editReply because deferReply was called
+            // Add a check to ensure interaction is still valid before attempting to editReply again
+            if (!interaction.replied && !interaction.deferred) {
+                // This case should ideally not be hit if deferReply is always at the start of /predict
+                await interaction.reply({ content: 'An unexpected error occurred while trying to generate AI analysis. Please try again later.', flags: [MessageFlags.Ephemeral] });
+            } else {
+                await interaction.editReply({ content: 'An unexpected error occurred while trying to generate AI analysis. Please try again later.', flags: [MessageFlags.Ephemeral] });
+            }
         }
     }
 });
@@ -604,7 +578,7 @@ const commands = [
                 name: 'user',
                 type: 6, // USER type
                 description: 'The user (by ID or mention) to verify.',
-                required: true, // This should ensure 'user' is always provided by Discord
+                required: true, // IMPORTANT: Ensure this is 'true' in your Discord Developer Portal command definition
             },
             {
                 name: 'duration',
@@ -620,7 +594,6 @@ const commands = [
                 ],
             },
         ],
-        // No default_member_permissions here, as we're doing custom ID-based admin check
     },
     // /admin subcommand group
     {
@@ -659,7 +632,6 @@ const commands = [
                 ],
             },
         ],
-        // No default_member_permissions here, as we're doing custom ID-based admin check
     },
     // /emergency subcommand group
     {
@@ -680,7 +652,6 @@ const commands = [
                 ],
             },
         ],
-        // No default_member_permissions here, as we're doing custom ID-based admin check
     },
     // /how_to_submit_result command
     {
@@ -725,8 +696,8 @@ const commands = [
                 type: 4, // INTEGER type
                 description: 'The total number of mines in the game (e.g., 5).',
                 required: true,
-                min_value: 1, // Example constraint
-                max_value: 24, // Example constraint
+                min_value: 1,
+                max_value: 24,
             },
             {
                 name: 'mine_positions',
@@ -740,8 +711,6 @@ const commands = [
     {
        name: 'predict',
        description: 'Analyze past game data (requires verification).',
-       // Add options for /predict here if it has any, e.g.,
-       // options: [{ name: 'data_filter', type: 3, description: 'Filter data (e.g., "last 24 hours").', required: false }]
     },
 ];
 
@@ -750,20 +719,10 @@ const rest = new REST({ version: '10' }).setToken(process.env.BOT_TOKEN);
 (async () => {
     try {
         console.log('Started refreshing application (/) commands.');
-
-        // For guild-specific commands (faster updates for development):
-        // UNCOMMENT THIS LINE if you want guild-specific commands.
-        // REPLACE 'YOUR_CLIENT_ID' and 'YOUR_GUILD_ID' below!
-        // await rest.put(
-        //     Routes.applicationGuildCommands('YOUR_CLIENT_ID', 'YOUR_GUILD_ID'),
-        //     { body: commands },
-        // );
-
-        // For global commands (takes up to 1 hour to propagate, but works everywhere):
-        // UNCOMMENT THIS LINE if you want global commands.
-        // REPLACE 'YOUR_CLIENT_ID' below!
+        // REPLACE 'YOUR_CLIENT_ID' and optionally 'YOUR_GUILD_ID' below!
         await rest.put(
-             Routes.applicationCommands('YOUR_CLIENT_ID'), // <--- REPLACE THIS WITH YOUR ACTUAL CLIENT ID!
+             Routes.applicationCommands('YOUR_CLIENT_ID'), // Global commands
+             // Routes.applicationGuildCommands('YOUR_CLIENT_ID', 'YOUR_GUILD_ID'), // Guild-specific commands (faster updates)
              { body: commands },
          );
 
