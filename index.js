@@ -2,7 +2,7 @@
 
 // --- Core Module Imports ---
 import { Client, GatewayIntentBits, Partials, PermissionFlagsBits, MessageFlags } from 'discord.js';
-import { MongoClient } from 'mongodb'; // CORRECTED: Changed '=' to 'from' here
+import { MongoClient } from 'mongodb'; 
 import { REST, Routes } from 'discord.js'; // For registering slash commands
 import crypto from 'crypto'; // Node.js built-in crypto module
 import express from 'express'; // Web server for Render health checks and self-ping
@@ -489,11 +489,13 @@ async function main() {
         // This prevents the "Unknown interaction" error if the bot takes too long to respond (3 seconds).
         if (interaction.isCommand() && !interaction.deferred && !interaction.replied) {
             try {
-                await interaction.deferReply({ ephemeral: false }); // Default to non-ephemeral, can be overridden later
+                // Changed to flags array to resolve deprecation warning.
+                await interaction.deferReply({ flags: [] }); // Default to non-ephemeral (no ephemeral flag)
                 console.log(`[DEBUG] Deferred reply for command: /${ensureString(interaction.commandName)} by ${ensureString(interaction.user.tag)}`);
             } catch (deferError) {
                 console.error(`[ERROR] Failed to defer reply for command /${ensureString(interaction.commandName)}: ${ensureString(deferError.message)}`, deferError);
                 try {
+                    // Changed to flags array to resolve deprecation warning.
                     if (!interaction.replied) {
                          await interaction.reply({ content: 'An unexpected issue occurred. Please try again.', flags: [MessageFlags.Ephemeral] }).catch(err => console.error(`[ERROR] Failed fallback reply (defer fail): ${ensureString(err.message)}`));
                     }
@@ -522,7 +524,7 @@ async function main() {
                 console.log(`[DEBUG /verify] Initial targetUserDiscordObject: ${targetUserDiscordObject ? ensureString(targetUserDiscordObject.tag) : 'null/undefined'} (ID: ${targetUserDiscordObject ? ensureString(targetUserDiscordObject.id) : 'N/A'})`);
 
                 if (!targetUserDiscordObject) {
-                    await interaction.editReply({ content: 'Target user not found in command options. This might indicate an outdated command definition on Discord. Please try again, ensuring you select a user from the auto-complete list. If the problem persists, commands might need to be re-registered.', flags: [MessageFlags.Ephemeral] });
+                    await interaction.editReply({ content: 'Target user not found in command options. This might be a Discord issue or the command definition is out of sync. Please try again, ensuring you select a user from the auto-complete list. If the problem persists, commands might need to be re-registered.', flags: [MessageFlags.Ephemeral] });
                     return;
                 }
                 const targetUserId = ensureString(targetUserDiscordObject.id);
@@ -588,14 +590,13 @@ async function main() {
 
                 verifiedUsersCache.set(ensureString(member.id), { userId: ensureString(member.id), isVerified: true, expiresAt: expiresAt });
 
-                await interaction.editReply({ content: `${ensureString(member.user.tag)} has been verified! They can now use the \`/predict\` command.`, ephemeral: false });
-
+                await interaction.editReply({ content: `${ensureString(member.user.tag)} has been verified! They can now use the \`/predict\` command.`, flags: [] }); // Changed to flags: []
                 try {
                     await member.send(getVerificationSuccessDM(ensureString(member.user.username), ensureString(durationTextForDM)));
                     console.log(`Sent verification successful DM to ${ensureString(member.user.tag)}`);
                 } catch (dmError) {
                     console.error(`Could not send verification successful DM to ${ensureString(member.user.tag)}. Error: ${ensureString(dmError.message)}. They might have DMs disabled.`, dmError);
-                    await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${ensureString(member.user.tag)} with important information, but their DMs might be disabled.)`, ephemeral: false });
+                    await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${ensureString(member.user.tag)} with important information, but their DMs might be disabled.)`, flags: [] }); // Changed to flags: []
                 }
             }
 
@@ -626,7 +627,7 @@ async function main() {
                         { $set: { isVerified: false, revokedAt: new Date(), revokedBy: userId } }
                     );
                     verifiedUsersCache.delete(ensureString(targetUser.id));
-                    await interaction.editReply({ content: `${ensureString(targetUser.tag)}'s access has been revoked.`, ephemeral: false });
+                    await interaction.editReply({ content: `${ensureString(targetUser.tag)}'s access has been revoked.`, flags: [] }); // Changed to flags: []
                 } else if (subCommand === 'stats') {
                     const gameResultsCollection = db.collection('gameResults');
                     const totalSubmissions = await gameResultsCollection.countDocuments();
@@ -634,7 +635,7 @@ async function main() {
 
                     await interaction.editReply({
                         content: `**Bot Statistics:**\nTotal Game Submissions: ${totalSubmissions}\nTotal Verified Users: ${totalVerifiedUsers}`,
-                        ephemeral: false
+                        flags: [] // Changed to flags: []
                     });
                 } else if (subCommand === 'unban') {
                     const targetUser = interaction.options.getUser('user');
@@ -647,7 +648,7 @@ async function main() {
                         { userId: ensureString(targetUser.id) },
                         { $unset: { isBanned: "" }, $set: { lastUnbannedAt: new Date(), unbannedBy: userId } }
                     );
-                    await interaction.editReply({ content: `${ensureString(targetUser.tag)} has been unbanned from submitting results.`, ephemeral: false });
+                    await interaction.editReply({ content: `${ensureString(targetUser.tag)} has been unbanned from submitting results.`, flags: [] }); // Changed to flags: []
                 }
             }
 
@@ -682,7 +683,7 @@ async function main() {
                         { upsert: true }
                     );
                     verifiedUsersCache.set(ensureString(targetUser.id), { userId: ensureString(targetUser.id), isVerified: true, expiresAt: null });
-                    await interaction.editReply({ content: `${ensureString(targetUser.tag)} has been **force verified** (emergency).`, ephemeral: false });
+                    await interaction.editReply({ content: `${ensureString(targetUser.tag)} has been **force verified** (emergency).`, flags: [] }); // Changed to flags: []
                 }
             }
 
@@ -702,7 +703,7 @@ Why submit a result? Your submissions help train the prediction model, making it
     • \`client_seed\`: \`VqsjloxT6b\`
     • \`nonce\`: \`3002\`
     • \`num_mines\`: \`5\`
-    • \`mine_positions\`: \`3,7,12,18,22\`
+    • • \`mine_positions\`: \`3,7,12,18,22\`
 
 **Remember to paste your exact data for best results!** 🎯
             `;
@@ -732,7 +733,7 @@ Why submit a result? Your submissions help train the prediction model, making it
                         leaderboardMessage += `${index + 1}. ${ensureString(entry.username)}: ${ensureString(entry.count)} submissions\n`;
                     });
                 }
-                await interaction.editReply({ content: leaderboardMessage, ephemeral: false });
+                await interaction.editReply({ content: leaderboardMessage, flags: [] }); // Changed to flags: []
             }
 
             // --- /myresult Command Logic ---
@@ -789,7 +790,7 @@ Why submit a result? Your submissions help train the prediction model, making it
                             isValidated: true
                         });
 
-                        await interaction.editReply({ content: '✅ Your game result has been successfully submitted and validated! It will now contribute to our community data.', flags: [MessageFlags.Ephemeral] });
+                        await interaction.editReply({ content: '✅ Your game result has been successfully submitted and validated! It will now contribute to our community data.', flags: [] }); // Changed to flags: []
                     } else {
                         await interaction.editReply({ content: '❌ Submitted mine positions do not match the computed game outcome or are invalid. Please double-check your input and ensure your algorithm for Rollbet\'s provably fair system is **exactly** correct if you are developing it.', flags: [MessageFlags.Ephemeral] });
                     }
@@ -845,7 +846,7 @@ Why submit a result? Your submissions help train the prediction model, making it
                                                              .toArray();
 
                 if (recentGameResults.length === 0) {
-                    await interaction.editReply({ content: 'No game results submitted yet for analysis. Please encourage users to use `/submitresult`!', ephemeral: false });
+                    await interaction.editReply({ content: 'No game results submitted yet for analysis. Please encourage users to use `/submitresult`!', flags: [] }); // Changed to flags: []
                     return;
                 }
 
@@ -857,7 +858,7 @@ Why submit a result? Your submissions help train the prediction model, making it
 
                 const aiAnalysis = await callGeminiAPI(dataSummary);
 
-                await interaction.editReply({ content: `**🤖 AI Data Analysis from Latest Submissions:**\n\n${aiAnalysis}`, ephemeral: false });
+                await interaction.editReply({ content: `**🤖 AI Data Analysis from Latest Submissions:**\n\n${aiAnalysis}`, flags: [] }); // Changed to flags: []
             }
         } catch (error) {
             console.error(`[ERROR] Error handling command '${ensureString(commandName)}' for user ${userTag} (${userId}):`, ensureString(error.message), error);
