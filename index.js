@@ -1,4 +1,4 @@
-// index.js - The Mines Predictor Discord Bot (All-in-One Version)
+// index.js - The Mines Predictor Discord Bot (All-in-One with Hardcoded Registration & Enhanced Error Handling)
 
 // --- Core Module Imports ---
 import { Client, GatewayIntentBits, Partials, PermissionFlagsBits, MessageFlags } from 'discord.js';
@@ -52,24 +52,24 @@ async function fetchWithRetry(url, options, maxRetries = 3, baseDelay = 1000) {
     let retries = 0;
     while (retries < maxRetries) {
         try {
-            console.log(`[DEBUG] Fetching ${url}, attempt ${retries + 1}/${maxRetries}`);
+            console.log(`[DEBUG] Fetching ${ensureString(url)}, attempt ${retries + 1}/${maxRetries}`);
             const response = await fetch(url, options);
             if (response.status === 429) {
                 const delay = baseDelay * Math.pow(2, retries);
-                console.warn(`[WARN] Rate limit hit for ${url}. Retrying in ${delay / 1000}s...`);
+                console.warn(`[WARN] Rate limit hit for ${ensureString(url)}. Retrying in ${delay / 1000}s...`);
                 await new Promise(res => setTimeout(res, delay));
                 retries++;
                 continue;
             }
             if (!response.ok) {
                 const errorText = await response.text();
-                throw new Error(`HTTP error! Status: ${response.status} - ${errorText}`);
+                throw new Error(`HTTP error! Status: ${ensureString(response.status)} - ${ensureString(errorText)}`);
             }
             return response;
         } catch (error) {
-            console.error(`[ERROR] Fetch attempt failed for ${url} (${retries + 1}/${maxRetries}):`, ensureString(error.message));
+            console.error(`[ERROR] Fetch attempt failed for ${ensureString(url)} (${retries + 1}/${maxRetries}):`, ensureString(error.message));
             const delay = baseDelay * Math.pow(2, retries);
-            console.warn(`[WARN] Retrying ${url} in ${delay / 1000}s...`);
+            console.warn(`[WARN] Retrying ${ensureString(url)} in ${delay / 1000}s...`);
             await new Promise(res => setTimeout(res, delay));
             retries++;
         }
@@ -86,12 +86,12 @@ async function startSelfPing() {
     try {
         const response = await fetch(SELF_PING_URL);
         if (response.ok) {
-            console.log(`Self-ping successful to ${SELF_PING_URL}`);
+            console.log(`Self-ping successful to ${ensureString(SELF_PING_URL)}`);
         } else {
-            console.warn(`Self-ping failed to ${SELF_PING_URL} with status: ${ensureString(response.status)}`);
+            console.warn(`Self-ping failed to ${ensureString(SELF_PING_URL)} with status: ${ensureString(response.status)}`);
         }
     } catch (error) {
-        console.error(`Error during self-ping to ${SELF_PING_URL}:`, ensureString(error.message));
+        console.error(`Error during self-ping to ${ensureString(SELF_PING_URL)}:`, ensureString(error.message));
     }
 }
 
@@ -257,7 +257,7 @@ app.listen(PORT, () => {
 
 // --- GLOBAL ERROR HANDLING ---
 process.on('unhandledRejection', (reason, promise) => {
-    console.error(`[FATAL ERROR] Unhandled Rejection at: ${promise}\nReason: ${ensureString(reason?.message || reason)}`, reason);
+    console.error(`[FATAL ERROR] Unhandled Rejection at: ${ensureString(promise)}\nReason: ${ensureString(reason?.message || reason)}`, reason);
     process.exit(1);
 });
 
@@ -444,7 +444,7 @@ const commands = [
                         Routes.applicationGuildCommands(CLIENT_ID_FOR_REGISTRATION, GUILD_ID_FOR_REGISTRATION),
                         { body: commands },
                     );
-                    console.log(`[COMMAND_REGISTRATION] Successfully reloaded application (/) commands for guild ${GUILD_ID_FOR_REGISTRATION}.`);
+                    console.log(`[COMMAND_REGISTRATION] Successfully reloaded application (/) commands for guild ${ensureString(GUILD_ID_FOR_REGISTRATION)}.`);
                 } else {
                     // Global commands (can take up to an hour to propagate)
                     await rest.put(
@@ -463,7 +463,7 @@ const commands = [
 
         if (SELF_PING_URL) {
             console.log(`[SETUP] SELF_PING_URL is set. Preparing self-ping system.`);
-            console.log(`Starting self-ping system. Pinging ${SELF_PING_URL} every ${PING_INTERVAL_MS / 1000 / 60} minutes.`);
+            console.log(`Starting self-ping system. Pinging ${ensureString(SELF_PING_URL)} every ${PING_INTERVAL_MS / 1000 / 60} minutes.`);
             startSelfPing();
             setInterval(startSelfPing, PING_INTERVAL_MS);
         } else {
@@ -484,23 +484,26 @@ const commands = [
     });
 
     client.on('interactionCreate', async interaction => {
+        // Defensive check: Defer reply early for commands that might take time.
+        // This avoids the "Interaction failed" error if the bot takes too long to respond.
         if (interaction.isCommand() && !interaction.deferred && !interaction.replied) {
             try {
-                await interaction.deferReply({ ephemeral: false });
+                await interaction.deferReply({ ephemeral: false }); // Default to non-ephemeral, can be overridden later
                 console.log(`[DEBUG] Deferred reply for command: /${ensureString(interaction.commandName)} by ${ensureString(interaction.user.tag)}`);
             } catch (deferError) {
                 console.error(`[ERROR] Failed to defer reply for command /${ensureString(interaction.commandName)}: ${ensureString(deferError.message)}`, deferError);
+                // Fallback: Try to send a simple ephemeral reply if defer fails
                 try {
-                    if (!interaction.replied) {
-                         await interaction.reply({ content: 'An unexpected issue occurred. Please try again.', ephemeral: true }).catch(err => console.error(`[ERROR] Failed fallback reply (defer fail): ${ensureString(err.message)}`));
+                    if (!interaction.replied) { // Only reply if not already replied
+                         await interaction.reply({ content: 'An unexpected issue occurred. Please try again.', flags: [MessageFlags.Ephemeral] }).catch(err => console.error(`[ERROR] Failed fallback reply (defer fail): ${ensureString(err.message)}`));
                     }
                 } catch (fallbackError) {
                     console.error(`[ERROR] Failed to send fallback reply for /${ensureString(interaction.commandName)}: ${ensureString(fallbackError.message)}`, fallbackError);
                 }
-                return;
+                return; // Stop further processing for this interaction
             }
         } else if (!interaction.isCommand()) {
-            return;
+            return; // Not a command interaction, ignore.
         }
 
         const { commandName } = interaction;
@@ -515,28 +518,33 @@ const commands = [
                     return;
                 }
 
+                // IMPORTANT FIX: Ensure 'user' option is correctly retrieved.
+                // If it's null even with 'required: true', it indicates a command registration mismatch
+                // or a Discord client issue. We add a specific check here.
                 const targetUserDiscordObject = interaction.options.getUser('user');
                 console.log(`[DEBUG /verify] Initial targetUserDiscordObject: ${targetUserDiscordObject ? targetUserDiscordObject.tag : 'null/undefined'} (ID: ${targetUserDiscordObject ? targetUserDiscordObject.id : 'N/A'})`);
 
                 if (!targetUserDiscordObject) {
-                    await interaction.editReply({ content: 'Target user not found in command options. Please provide a valid user. (Discord did not send user data for the "user" option.)', flags: [MessageFlags.Ephemeral] });
+                    await interaction.editReply({ content: 'Target user not found in command options. This might be a Discord issue or the command definition is out of sync. Please try again, ensuring you select a user from the auto-complete list. If the problem persists, commands might need to be re-registered.', flags: [MessageFlags.Ephemeral] });
                     return;
                 }
                 const targetUserId = ensureString(targetUserDiscordObject.id);
 
                 console.log(`[DEBUG /verify] Resolved targetUserId from options: ${targetUserId}`);
 
+                // Attempt to fetch the member, first from cache, then via API if not found
                 let member = interaction.guild?.members.cache.get(targetUserId);
                 console.log(`[DEBUG /verify] Member from cache: ${member ? member.user.tag : 'null/undefined'} (ID: ${member ? member.id : 'N/A'})`);
 
+                // If member not in cache and we are in a guild context, try to fetch it
                 if (!member && interaction.guild) {
                     console.log(`[DEBUG /verify] Member ${targetUserId} not in cache, attempting to fetch from API for guild ${ensureString(interaction.guild.id)}.`);
                     try {
                         member = await interaction.guild.members.fetch(targetUserId);
-                        console.log(`[DEBUG /verify] Successfully fetched member ${member.user.tag} (ID: ${member.id}) from API.`);
+                        console.log(`[DEBUG /verify] Successfully fetched member ${ensureString(member.user.tag)} (ID: ${ensureString(member.id)}) from API.`);
                     } catch (fetchError) {
                         console.error(`[ERROR] /verify: Failed to fetch member ${targetUserId} from API: ${ensureString(fetchError.message)}`, fetchError);
-                        member = null;
+                        member = null; // Set to null if fetching failed
                     }
                 }
 
@@ -545,6 +553,7 @@ const commands = [
                     return;
                 }
                 console.log(`[DEBUG] /verify: Final member found: ${ensureString(member.user.tag)} (ID: ${ensureString(member.id)})`);
+
 
                 const durationOption = interaction.options.getString('duration');
                 let expiresAt = null;
@@ -725,7 +734,7 @@ Why submit a result? Your submissions help train the prediction model, making it
                     leaderboardMessage += "No submissions yet. Be the first!";
                 } else {
                     leaderboard.forEach((entry, index) => {
-                        leaderboardMessage += `${index + 1}. ${ensureString(entry.username)}: ${entry.count} submissions\n`;
+                        leaderboardMessage += `${index + 1}. ${ensureString(entry.username)}: ${ensureString(entry.count)} submissions\n`;
                     });
                 }
                 await interaction.editReply({ content: leaderboardMessage, ephemeral: false });
@@ -741,7 +750,7 @@ Why submit a result? Your submissions help train the prediction model, making it
                 const db = dbClient.db('MineBotDB');
                 const collection = db.collection('gameResults');
                 const mySubmissions = await collection.countDocuments({ userId: userId });
-                await interaction.editReply({ content: `You have submitted **${mySubmissions}** game results.`, flags: [MessageFlags.Ephemeral] });
+                await interaction.editReply({ content: `You have submitted **${ensureString(mySubmissions)}** game results.`, flags: [MessageFlags.Ephemeral] });
             }
 
             // --- /submitresult Command Logic ---
@@ -854,6 +863,7 @@ Why submit a result? Your submissions help train the prediction model, making it
             }
         } catch (error) {
             console.error(`[ERROR] Error handling command '${ensureString(commandName)}' for user ${ensureString(userTag)} (${ensureString(userId)}):`, ensureString(error.message), error);
+            // This ensures a reply is always sent, even if an unexpected error occurs after deferring.
             if (interaction.deferred || interaction.replied) {
                 await interaction.editReply({ content: 'An unexpected error occurred while processing your command. Please try again later.', flags: [MessageFlags.Ephemeral] }).catch(err => console.error(`[ERROR] Failed to send error editReply: ${ensureString(err.message)}`, err));
             } else {
