@@ -12,8 +12,8 @@ import express from 'express'; // Web server for Render health checks and self-p
 // =========================================================================
 // !!! IMPORTANT: FILL THESE OUT WITH YOUR BOT'S ACTUAL DISCORD DETAILS !!!
 // These are used for initial slash command registration.
-const CLIENT_ID_FOR_REGISTRATION = 'PASTE_YOUR_CLIENT_ID_HERE';    // <--- REPLACE THIS WITH YOUR BOT'S APPLICATION ID
-const GUILD_ID_FOR_REGISTRATION = 'PASTE_YOUR_GUILD_ID_HERE';      // <--- REPLACE THIS WITH YOUR SPECIFIC GUILD (SERVER) ID
+const CLIENT_ID_FOR_REGISTRATION = '1405900512733429812';    // <--- REPLACE THIS WITH YOUR BOT'S APPLICATION ID
+const GUILD_ID_FOR_REGISTRATION = '1406162725758828684';      // <--- REPLACE THIS WITH YOUR SPECIFIC GUILD (SERVER) ID
 const BOT_TOKEN_FOR_REGISTRATION = process.env.DISCORD_TOKEN; // This now correctly uses your environment variable!
 // =========================================================================
 
