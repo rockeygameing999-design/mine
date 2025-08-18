@@ -1,11 +1,11 @@
 // -----------------------------------
-//          index.js - Complete Bot Code
+//          index.js - Complete Bot Code (ES Modules)
 // -----------------------------------
-require('dotenv').config();
-const { Client, GatewayIntentBits, Partials, Collection, REST, Routes, SlashCommandBuilder } = require('discord.js');
-const { MongoClient } = require('mongodb');
-const express = require('express');
-const fetch = require('node-fetch'); // Using node-fetch for older Node.js versions, native fetch if on newer versions (v18+)
+import 'dotenv/config'; // ES Module equivalent for require('dotenv').config();
+import { Client, GatewayIntentBits, Partials, Collection, REST, Routes, SlashCommandBuilder } from 'discord.js';
+import { MongoClient } from 'mongodb';
+import express from 'express';
+import fetch from 'node-fetch'; // Explicitly import fetch from node-fetch for consistency
 
 // --- Global Error Handling ---
 process.on('unhandledRejection', error => {
