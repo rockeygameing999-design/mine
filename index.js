@@ -2,7 +2,7 @@
 
 // --- Core Module Imports ---
 import { Client, GatewayIntentBits, Partials, PermissionFlagsBits, MessageFlags } from 'discord.js';
-import { MongoClient } from 'mongodb'; // CORRECTED: Changed '=' to 'from' here
+import { MongoClient } from 'mongodb'; 
 import { REST, Routes } from 'discord.js'; // For registering slash commands
 import crypto from 'crypto'; // Node.js built-in crypto module
 import express from 'express'; // Web server for Render health checks and self-ping
@@ -267,16 +267,16 @@ process.on('uncaughtException', (err) => {
     process.exit(1);
 });
 
-// --- Slash Command Definitions (Moved Here) ---
+// --- Slash Command Definitions (Updated for 'target_user' as STRING) ---
 const commands = [
     {
         name: 'verify',
         description: 'Admin: Verifies a user by ID for permanent or time-based access.',
         options: [
             {
-                name: 'user',
-                type: 6, // USER type - CRITICAL for user mentions
-                description: 'The user (by ID or mention) to verify.',
+                name: 'target_user_mention', // Changed name from 'user'
+                type: 3, // Changed type from USER (6) to STRING (3)
+                description: 'Mention the user (e.g., @user) to verify.',
                 required: true,
             },
             {
@@ -304,9 +304,9 @@ const commands = [
                 type: 1, // SUB_COMMAND
                 options: [
                     {
-                        name: 'user',
-                        type: 6, // USER type
-                        description: 'The user to revoke access from.',
+                        name: 'target_user_mention', // Changed name from 'user'
+                        type: 3, // Changed type from USER (6) to STRING (3)
+                        description: 'Mention the user (e.g., @user) to revoke access from.',
                         required: true,
                     },
                 ],
@@ -322,9 +322,9 @@ const commands = [
                 type: 1, // SUB_COMMAND
                 options: [
                     {
-                        name: 'user',
-                        type: 6, // USER type
-                        description: 'The user to unban.',
+                        name: 'target_user_mention', // Changed name from 'user'
+                        type: 3, // Changed type from USER (6) to STRING (3)
+                        description: 'Mention the user (e.g., @user) to unban.',
                         required: true,
                     },
                 ],
@@ -341,9 +341,9 @@ const commands = [
                 type: 1, // SUB_COMMAND
                 options: [
                     {
-                        name: 'user',
-                        type: 6, // USER type
-                        description: 'The user to force verify.',
+                        name: 'target_user_mention', // Changed name from 'user'
+                        type: 3, // Changed type from USER (6) to STRING (3)
+                        description: 'Mention the user (e.g., @user) to force verify.',
                         required: true,
                     },
                 ],
@@ -513,27 +513,30 @@ async function main() {
         const userTag = ensureString(interaction.user.tag);
 
         try {
-            // --- /verify Command Logic ---
+            // --- /verify Command Logic (UPDATED TO HANDLE STRING MENTION) ---
             if (commandName === 'verify') {
                 if (!isAuthorizedAdmin(userId)) {
                     await interaction.editReply({ content: 'You do not have permission to use this command. Only designated administrators can verify users.', flags: [MessageFlags.Ephemeral] });
                     return;
                 }
 
-                // *** NEW DEBUGGING LOGGING HERE ***
+                // Log the raw options received for debugging
                 console.log(`[DEBUG /verify] Raw options received: ${JSON.stringify(interaction.options.data, null, 2)}`);
 
-                const targetUserDiscordObject = interaction.options.getUser('user');
-                console.log(`[DEBUG /verify] Initial targetUserDiscordObject: ${targetUserDiscordObject ? ensureString(targetUserDiscordObject.tag) : 'null/undefined'} (ID: ${targetUserDiscordObject ? ensureString(targetUserDiscordObject.id) : 'N/A'})`);
+                // Get the string value for the new 'target_user_mention' option
+                const targetUserMentionString = interaction.options.getString('target_user_mention');
+                console.log(`[DEBUG /verify] targetUserMentionString: ${ensureString(targetUserMentionString)}`);
 
-                if (!targetUserDiscordObject) {
-                    await interaction.editReply({ content: 'Target user not found in command options. This might be a Discord issue or the command definition is out of sync. Please try again, ensuring you select a user from the auto-complete list. If the problem persists, commands might need to be re-registered.', flags: [MessageFlags.Ephemeral] });
+                // Extract the user ID from the mention string (e.g., "<@1234567890>" -> "1234567890")
+                const targetUserId = ensureString(targetUserMentionString).replace(/[<@!>]/g, '');
+
+                console.log(`[DEBUG /verify] Extracted targetUserId from mention: ${targetUserId}`);
+
+                if (!targetUserId) {
+                    await interaction.editReply({ content: 'Could not extract user ID from the mention. Please ensure you are mentioning a valid user (e.g., `@username`).', flags: [MessageFlags.Ephemeral] });
                     return;
                 }
-                const targetUserId = ensureString(targetUserDiscordObject.id);
-
-                console.log(`[DEBUG /verify] Resolved targetUserId from options: ${targetUserId}`);
-
+                
                 let member = interaction.guild?.members.cache.get(targetUserId);
                 console.log(`[DEBUG /verify] Member from cache: ${member ? ensureString(member.user.tag) : 'null/undefined'} (ID: ${member ? ensureString(member.id) : 'N/A'})`);
 
@@ -543,13 +546,13 @@ async function main() {
                         member = await interaction.guild.members.fetch(targetUserId);
                         console.log(`[DEBUG /verify] Successfully fetched member ${ensureString(member.user.tag)} (ID: ${ensureString(member.id)}) from API.`);
                     } catch (fetchError) {
-                        console.error(`[ERROR] /verify: Failed to fetch member ${targetUserId} from API: ${ensureString(fetchError.message)}`, fetchError);
+                        console.error(`[ERROR] /verify: Failed to fetch member ${targetUserId} from API: ${ensureString(fetchError.message)}. User might not be in this guild.`, fetchError);
                         member = null;
                     }
                 }
 
                 if (!member) {
-                    await interaction.editReply({ content: `Could not find user with ID ${targetUserId} in this server. Please ensure the user is in this server and the ID is correct.`, flags: [MessageFlags.Ephemeral] });
+                    await interaction.editReply({ content: `Could not find user with ID ${targetUserId} in this server. Please ensure the user is in this server and the mention is correct.`, flags: [MessageFlags.Ephemeral] });
                     return;
                 }
                 console.log(`[DEBUG] /verify: Final member found: ${ensureString(member.user.tag)} (ID: ${ensureString(member.id)})`);
@@ -593,17 +596,17 @@ async function main() {
 
                 verifiedUsersCache.set(ensureString(member.id), { userId: ensureString(member.id), isVerified: true, expiresAt: expiresAt });
 
-                await interaction.editReply({ content: `${ensureString(member.user.tag)} has been verified! They can now use the \`/predict\` command.`, flags: [] }); // Changed to flags: []
+                await interaction.editReply({ content: `${ensureString(member.user.tag)} has been verified! They can now use the \`/predict\` command.`, flags: [] }); 
                 try {
                     await member.send(getVerificationSuccessDM(ensureString(member.user.username), ensureString(durationTextForDM)));
                     console.log(`Sent verification successful DM to ${ensureString(member.user.tag)}`);
                 } catch (dmError) {
                     console.error(`Could not send verification successful DM to ${ensureString(member.user.tag)}. Error: ${ensureString(dmError.message)}. They might have DMs disabled.`, dmError);
-                    await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${ensureString(member.user.tag)} with important information, but their DMs might be disabled.)`, flags: [] }); // Changed to flags: []
+                    await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${ensureString(member.user.tag)} with important information, but their DMs might be disabled.)`, flags: [] }); 
                 }
             }
 
-            // --- /admin subcommand group logic ---
+            // --- /admin subcommand group logic (UPDATED TO HANDLE STRING MENTION) ---
             else if (commandName === 'admin') {
                 if (!isAuthorizedAdmin(userId)) {
                     await interaction.editReply({ content: 'You do not have permission to use admin commands.', flags: [MessageFlags.Ephemeral] });
@@ -619,18 +622,30 @@ async function main() {
                 const db = dbClient.db('MineBotDB');
 
                 if (subCommand === 'revoke') {
-                    const targetUser = interaction.options.getUser('user');
-                    if (!targetUser) {
-                        await interaction.editReply({ content: 'Please specify a user to revoke access from.', flags: [MessageFlags.Ephemeral] });
+                    const targetUserMentionString = interaction.options.getString('target_user_mention');
+                    const targetUserId = ensureString(targetUserMentionString).replace(/[<@!>]/g, '');
+                    if (!targetUserId) {
+                        await interaction.editReply({ content: 'Could not extract user ID from the mention. Please ensure you are mentioning a valid user (e.g., `@username`).', flags: [MessageFlags.Ephemeral] });
                         return;
                     }
+                    // Attempt to fetch member to get their current tag
+                    let member = interaction.guild?.members.cache.get(targetUserId);
+                    if (!member && interaction.guild) {
+                        try {
+                            member = await interaction.guild.members.fetch(targetUserId);
+                        } catch (fetchError) {
+                            console.error(`[ERROR] /admin revoke: Failed to fetch member ${targetUserId} from API: ${ensureString(fetchError.message)}.`, fetchError);
+                        }
+                    }
+                    const usernameForLog = member ? ensureString(member.user.tag) : `Unknown User (ID: ${targetUserId})`;
+
                     const verifiedCollection = db.collection('verifiedUsers');
                     await verifiedCollection.updateOne(
-                        { userId: ensureString(targetUser.id) },
+                        { userId: targetUserId },
                         { $set: { isVerified: false, revokedAt: new Date(), revokedBy: userId } }
                     );
-                    verifiedUsersCache.delete(ensureString(targetUser.id));
-                    await interaction.editReply({ content: `${ensureString(targetUser.tag)}'s access has been revoked.`, flags: [] }); // Changed to flags: []
+                    verifiedUsersCache.delete(targetUserId);
+                    await interaction.editReply({ content: `${usernameForLog}'s access has been revoked.`, flags: [] }); 
                 } else if (subCommand === 'stats') {
                     const gameResultsCollection = db.collection('gameResults');
                     const totalSubmissions = await gameResultsCollection.countDocuments();
@@ -638,24 +653,36 @@ async function main() {
 
                     await interaction.editReply({
                         content: `**Bot Statistics:**\nTotal Game Submissions: ${totalSubmissions}\nTotal Verified Users: ${totalVerifiedUsers}`,
-                        flags: [] // Changed to flags: []
+                        flags: [] 
                     });
                 } else if (subCommand === 'unban') {
-                    const targetUser = interaction.options.getUser('user');
-                    if (!targetUser) {
-                        await interaction.editReply({ content: 'Please specify a user to unban.', flags: [MessageFlags.Ephemeral] });
+                    const targetUserMentionString = interaction.options.getString('target_user_mention');
+                    const targetUserId = ensureString(targetUserMentionString).replace(/[<@!>]/g, '');
+                    if (!targetUserId) {
+                        await interaction.editReply({ content: 'Could not extract user ID from the mention. Please ensure you are mentioning a valid user (e.g., `@username`).', flags: [MessageFlags.Ephemeral] });
                         return;
                     }
+                    // Attempt to fetch member to get their current tag
+                    let member = interaction.guild?.members.cache.get(targetUserId);
+                    if (!member && interaction.guild) {
+                        try {
+                            member = await interaction.guild.members.fetch(targetUserId);
+                        } catch (fetchError) {
+                            console.error(`[ERROR] /admin unban: Failed to fetch member ${targetUserId} from API: ${ensureString(fetchError.message)}.`, fetchError);
+                        }
+                    }
+                    const usernameForLog = member ? ensureString(member.user.tag) : `Unknown User (ID: ${targetUserId})`;
+
                     const verifiedCollection = db.collection('verifiedUsers');
                     await verifiedCollection.updateOne(
-                        { userId: ensureString(targetUser.id) },
+                        { userId: targetUserId },
                         { $unset: { isBanned: "" }, $set: { lastUnbannedAt: new Date(), unbannedBy: userId } }
                     );
-                    await interaction.editReply({ content: `${ensureString(targetUser.tag)} has been unbanned from submitting results.`, flags: [] }); // Changed to flags: []
+                    await interaction.editReply({ content: `${usernameForLog} has been unbanned from submitting results.`, flags: [] }); 
                 }
             }
 
-            // --- /emergency subcommand group logic ---
+            // --- /emergency subcommand group logic (UPDATED TO HANDLE STRING MENTION) ---
             else if (commandName === 'emergency') {
                 if (!isAuthorizedAdmin(userId)) {
                     await interaction.editReply({ content: 'You do not have permission to use emergency commands.', flags: [MessageFlags.Ephemeral] });
@@ -665,18 +692,30 @@ async function main() {
                 const subCommand = interaction.options.getSubcommand();
 
                 if (subCommand === 'verify') {
-                    const targetUser = interaction.options.getUser('user');
-                    if (!targetUser) {
-                        await interaction.editReply({ content: 'Please specify a user to force verify.', flags: [MessageFlags.Ephemeral] });
+                    const targetUserMentionString = interaction.options.getString('target_user_mention');
+                    const targetUserId = ensureString(targetUserMentionString).replace(/[<@!>]/g, '');
+                    if (!targetUserId) {
+                        await interaction.editReply({ content: 'Could not extract user ID from the mention. Please ensure you are mentioning a valid user (e.g., `@username`).', flags: [MessageFlags.Ephemeral] });
                         return;
                     }
+                     // Attempt to fetch member to get their current tag
+                    let member = interaction.guild?.members.cache.get(targetUserId);
+                    if (!member && interaction.guild) {
+                        try {
+                            member = await interaction.guild.members.fetch(targetUserId);
+                        } catch (fetchError) {
+                            console.error(`[ERROR] /emergency verify: Failed to fetch member ${targetUserId} from API: ${ensureString(fetchError.message)}.`, fetchError);
+                        }
+                    }
+                    const usernameForLog = member ? ensureString(member.user.tag) : `Unknown User (ID: ${targetUserId})`;
+
                     const db = dbClient.db('MineBotDB');
                     const verifiedCollection = db.collection('verifiedUsers');
                     await verifiedCollection.updateOne(
-                        { userId: ensureString(targetUser.id) },
+                        { userId: targetUserId },
                         { $set: {
-                            userId: ensureString(targetUser.id),
-                            username: ensureString(targetUser.tag),
+                            userId: targetUserId,
+                            username: usernameForLog, // Use fetched username if available
                             isVerified: true,
                             expiresAt: null,
                             verifiedAt: new Date(),
@@ -685,8 +724,8 @@ async function main() {
                         }},
                         { upsert: true }
                     );
-                    verifiedUsersCache.set(ensureString(targetUser.id), { userId: ensureString(targetUser.id), isVerified: true, expiresAt: null });
-                    await interaction.editReply({ content: `${ensureString(targetUser.tag)} has been **force verified** (emergency).`, flags: [] }); // Changed to flags: []
+                    verifiedUsersCache.set(targetUserId, { userId: targetUserId, isVerified: true, expiresAt: null });
+                    await interaction.editReply({ content: `${usernameForLog} has been **force verified** (emergency).`, flags: [] }); 
                 }
             }
 
@@ -736,7 +775,7 @@ Why submit a result? Your submissions help train the prediction model, making it
                         leaderboardMessage += `${index + 1}. ${ensureString(entry.username)}: ${ensureString(entry.count)} submissions\n`;
                     });
                 }
-                await interaction.editReply({ content: leaderboardMessage, flags: [] }); // Changed to flags: []
+                await interaction.editReply({ content: leaderboardMessage, flags: [] }); 
             }
 
             // --- /myresult Command Logic ---
@@ -793,7 +832,7 @@ Why submit a result? Your submissions help train the prediction model, making it
                             isValidated: true
                         });
 
-                        await interaction.editReply({ content: '✅ Your game result has been successfully submitted and validated! It will now contribute to our community data.', flags: [] }); // Changed to flags: []
+                        await interaction.editReply({ content: '✅ Your game result has been successfully submitted and validated! It will now contribute to our community data.', flags: [] }); 
                     } else {
                         await interaction.editReply({ content: '❌ Submitted mine positions do not match the computed game outcome or are invalid. Please double-check your input and ensure your algorithm for Rollbet\'s provably fair system is **exactly** correct if you are developing it.', flags: [MessageFlags.Ephemeral] });
                     }
@@ -849,7 +888,7 @@ Why submit a result? Your submissions help train the prediction model, making it
                                                              .toArray();
 
                 if (recentGameResults.length === 0) {
-                    await interaction.editReply({ content: 'No game results submitted yet for analysis. Please encourage users to use `/submitresult`!', flags: [] }); // Changed to flags: []
+                    await interaction.editReply({ content: 'No game results submitted yet for analysis. Please encourage users to use `/submitresult`!', flags: [] }); 
                     return;
                 }
 
@@ -861,7 +900,7 @@ Why submit a result? Your submissions help train the prediction model, making it
 
                 const aiAnalysis = await callGeminiAPI(dataSummary);
 
-                await interaction.editReply({ content: `**🤖 AI Data Analysis from Latest Submissions:**\n\n${aiAnalysis}`, flags: [] }); // Changed to flags: []
+                await interaction.editReply({ content: `**🤖 AI Data Analysis from Latest Submissions:**\n\n${aiAnalysis}`, flags: [] }); 
             }
         } catch (error) {
             console.error(`[ERROR] Error handling command '${ensureString(commandName)}' for user ${userTag} (${userId}):`, ensureString(error.message), error);
