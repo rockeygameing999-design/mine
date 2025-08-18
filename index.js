@@ -1,4 +1,4 @@
-// index.js - The Mines Predictor Discord Bot (All-in-One with Hardcoded Registration & Enhanced Error Handling)
+// index.js - The Mines Predictor Discord Bot (All-in-One with Robust User Parsing)
 
 // --- Core Module Imports ---
 import { Client, GatewayIntentBits, Partials, PermissionFlagsBits, MessageFlags } from 'discord.js';
@@ -267,16 +267,16 @@ process.on('uncaughtException', (err) => {
     process.exit(1);
 });
 
-// --- Slash Command Definitions (Updated for 'target_user' as STRING) ---
+// --- Slash Command Definitions (Reverted to 'user' type 6, for better Discord compatibility) ---
 const commands = [
     {
         name: 'verify',
         description: 'Admin: Verifies a user by ID for permanent or time-based access.',
         options: [
             {
-                name: 'target_user_mention', // Changed name from 'user'
-                type: 3, // Changed type from USER (6) to STRING (3)
-                description: 'Mention the user (e.g., @user) to verify.',
+                name: 'user', // Reverted name to 'user'
+                type: 6,      // Reverted type to USER (6)
+                description: 'The user (by mention) to verify.',
                 required: true,
             },
             {
@@ -304,9 +304,9 @@ const commands = [
                 type: 1, // SUB_COMMAND
                 options: [
                     {
-                        name: 'target_user_mention', // Changed name from 'user'
-                        type: 3, // Changed type from USER (6) to STRING (3)
-                        description: 'Mention the user (e.g., @user) to revoke access from.',
+                        name: 'user', // Reverted name to 'user'
+                        type: 6,      // Reverted type to USER (6)
+                        description: 'The user to revoke access from.',
                         required: true,
                     },
                 ],
@@ -322,9 +322,9 @@ const commands = [
                 type: 1, // SUB_COMMAND
                 options: [
                     {
-                        name: 'target_user_mention', // Changed name from 'user'
-                        type: 3, // Changed type from USER (6) to STRING (3)
-                        description: 'Mention the user (e.g., @user) to unban.',
+                        name: 'user', // Reverted name to 'user'
+                        type: 6,      // Reverted type to USER (6)
+                        description: 'The user to unban.',
                         required: true,
                     },
                 ],
@@ -341,9 +341,9 @@ const commands = [
                 type: 1, // SUB_COMMAND
                 options: [
                     {
-                        name: 'target_user_mention', // Changed name from 'user'
-                        type: 3, // Changed type from USER (6) to STRING (3)
-                        description: 'Mention the user (e.g., @user) to force verify.',
+                        name: 'user', // Reverted name to 'user'
+                        type: 6,      // Reverted type to USER (6)
+                        description: 'The user to force verify.',
                         required: true,
                     },
                 ],
@@ -513,30 +513,45 @@ async function main() {
         const userTag = ensureString(interaction.user.tag);
 
         try {
-            // --- /verify Command Logic (UPDATED TO HANDLE STRING MENTION) ---
+            // --- /verify Command Logic (UPDATED TO ROBUSTLY PARSE USER) ---
             if (commandName === 'verify') {
                 if (!isAuthorizedAdmin(userId)) {
                     await interaction.editReply({ content: 'You do not have permission to use this command. Only designated administrators can verify users.', flags: [MessageFlags.Ephemeral] });
                     return;
                 }
 
-                // Log the raw options received for debugging
                 console.log(`[DEBUG /verify] Raw options received: ${JSON.stringify(interaction.options.data, null, 2)}`);
 
-                // Get the string value for the new 'target_user_mention' option
-                const targetUserMentionString = interaction.options.getString('target_user_mention');
-                console.log(`[DEBUG /verify] targetUserMentionString: ${ensureString(targetUserMentionString)}`);
+                let targetUserDiscordObject = interaction.options.getUser('user'); // Attempt to get as a User object (preferred)
+                let targetUserId = null;
+                let usernameForLog = null;
 
-                // Extract the user ID from the mention string (e.g., "<@1234567890>" -> "1234567890")
-                const targetUserId = ensureString(targetUserMentionString).replace(/[<@!>]/g, '');
-
-                console.log(`[DEBUG /verify] Extracted targetUserId from mention: ${targetUserId}`);
+                if (targetUserDiscordObject) {
+                    targetUserId = ensureString(targetUserDiscordObject.id);
+                    usernameForLog = ensureString(targetUserDiscordObject.tag);
+                    console.log(`[DEBUG /verify] Successfully got user object: ${usernameForLog} (ID: ${targetUserId})`);
+                } else {
+                    // Fallback if Discord client is sending it as a string instead of user object (as seen in previous logs)
+                    const rawUserIdString = interaction.options.getString('user_id') || interaction.options.getString('user'); // Try both old and new possible string names
+                    if (rawUserIdString) {
+                        // Extract ID from potential mention format like "<@!1234567890>" or just "1234567890"
+                        const extractedId = rawUserIdString.replace(/[^0-9]/g, ''); // Extract only digits
+                        if (extractedId) {
+                            targetUserId = extractedId;
+                            console.log(`[DEBUG /verify] Fallback: Extracted ID from string: ${targetUserId}`);
+                        } else {
+                            console.warn(`[WARN] Could not extract numeric ID from raw string: ${ensureString(rawUserIdString)}`);
+                        }
+                    } else {
+                        console.warn(`[WARN] No 'user' or 'user_id' string option found.`);
+                    }
+                }
 
                 if (!targetUserId) {
-                    await interaction.editReply({ content: 'Could not extract user ID from the mention. Please ensure you are mentioning a valid user (e.g., `@username`).', flags: [MessageFlags.Ephemeral] });
+                    await interaction.editReply({ content: 'Target user not found or could not be parsed from command options. Please ensure you are selecting a valid user from Discord\'s auto-complete.', flags: [MessageFlags.Ephemeral] });
                     return;
                 }
-                
+
                 let member = interaction.guild?.members.cache.get(targetUserId);
                 console.log(`[DEBUG /verify] Member from cache: ${member ? ensureString(member.user.tag) : 'null/undefined'} (ID: ${member ? ensureString(member.id) : 'N/A'})`);
 
@@ -555,7 +570,8 @@ async function main() {
                     await interaction.editReply({ content: `Could not find user with ID ${targetUserId} in this server. Please ensure the user is in this server and the mention is correct.`, flags: [MessageFlags.Ephemeral] });
                     return;
                 }
-                console.log(`[DEBUG] /verify: Final member found: ${ensureString(member.user.tag)} (ID: ${ensureString(member.id)})`);
+                usernameForLog = ensureString(member.user.tag); // Ensure we use the fetched username if member is found
+                console.log(`[DEBUG] /verify: Final member found: ${usernameForLog} (ID: ${ensureString(member.id)})`);
 
 
                 const durationOption = interaction.options.getString('duration');
@@ -585,7 +601,7 @@ async function main() {
                     { userId: ensureString(member.id) },
                     { $set: {
                         userId: ensureString(member.id),
-                        username: ensureString(member.user.tag),
+                        username: usernameForLog,
                         isVerified: true,
                         expiresAt: expiresAt,
                         verifiedAt: new Date(),
@@ -596,7 +612,7 @@ async function main() {
 
                 verifiedUsersCache.set(ensureString(member.id), { userId: ensureString(member.id), isVerified: true, expiresAt: expiresAt });
 
-                await interaction.editReply({ content: `${ensureString(member.user.tag)} has been verified! They can now use the \`/predict\` command.`, flags: [] }); 
+                await interaction.editReply({ content: `${usernameForLog} has been verified! They can now use the \`/predict\` command.`, flags: [] }); 
                 try {
                     await member.send(getVerificationSuccessDM(ensureString(member.user.username), ensureString(durationTextForDM)));
                     console.log(`Sent verification successful DM to ${ensureString(member.user.tag)}`);
@@ -606,7 +622,7 @@ async function main() {
                 }
             }
 
-            // --- /admin subcommand group logic (UPDATED TO HANDLE STRING MENTION) ---
+            // --- /admin subcommand group logic (UPDATED TO ROBUSTLY PARSE USER) ---
             else if (commandName === 'admin') {
                 if (!isAuthorizedAdmin(userId)) {
                     await interaction.editReply({ content: 'You do not have permission to use admin commands.', flags: [MessageFlags.Ephemeral] });
@@ -622,23 +638,39 @@ async function main() {
                 const db = dbClient.db('MineBotDB');
 
                 if (subCommand === 'revoke') {
-                    const targetUserMentionString = interaction.options.getString('target_user_mention');
-                    const targetUserId = ensureString(targetUserMentionString).replace(/[<@!>]/g, '');
-                    if (!targetUserId) {
-                        await interaction.editReply({ content: 'Could not extract user ID from the mention. Please ensure you are mentioning a valid user (e.g., `@username`).', flags: [MessageFlags.Ephemeral] });
-                        return;
-                    }
-                    // Attempt to fetch member to get their current tag
-                    let member = interaction.guild?.members.cache.get(targetUserId);
-                    if (!member && interaction.guild) {
-                        try {
-                            member = await interaction.guild.members.fetch(targetUserId);
-                        } catch (fetchError) {
-                            console.error(`[ERROR] /admin revoke: Failed to fetch member ${targetUserId} from API: ${ensureString(fetchError.message)}.`, fetchError);
+                    let targetUserDiscordObject = interaction.options.getUser('user');
+                    let targetUserId = null;
+                    let usernameForLog = null;
+
+                    if (targetUserDiscordObject) {
+                        targetUserId = ensureString(targetUserDiscordObject.id);
+                        usernameForLog = ensureString(targetUserDiscordObject.tag);
+                    } else {
+                        const rawUserIdString = interaction.options.getString('user_id') || interaction.options.getString('user');
+                        if (rawUserIdString) {
+                            const extractedId = rawUserIdString.replace(/[^0-9]/g, '');
+                            if (extractedId) targetUserId = extractedId;
                         }
                     }
-                    const usernameForLog = member ? ensureString(member.user.tag) : `Unknown User (ID: ${targetUserId})`;
 
+                    if (!targetUserId) {
+                        await interaction.editReply({ content: 'Target user not found or could not be parsed from command options. Please ensure you are selecting a valid user.', flags: [MessageFlags.Ephemeral] });
+                        return;
+                    }
+
+                    // Attempt to fetch member to get their current tag if not already obtained
+                    if (!usernameForLog) {
+                        let member = interaction.guild?.members.cache.get(targetUserId);
+                        if (!member && interaction.guild) {
+                            try {
+                                member = await interaction.guild.members.fetch(targetUserId);
+                            } catch (fetchError) {
+                                console.error(`[ERROR] /admin revoke: Failed to fetch member ${targetUserId} from API: ${ensureString(fetchError.message)}.`, fetchError);
+                            }
+                        }
+                        usernameForLog = member ? ensureString(member.user.tag) : `Unknown User (ID: ${targetUserId})`;
+                    }
+                    
                     const verifiedCollection = db.collection('verifiedUsers');
                     await verifiedCollection.updateOne(
                         { userId: targetUserId },
@@ -656,22 +688,38 @@ async function main() {
                         flags: [] 
                     });
                 } else if (subCommand === 'unban') {
-                    const targetUserMentionString = interaction.options.getString('target_user_mention');
-                    const targetUserId = ensureString(targetUserMentionString).replace(/[<@!>]/g, '');
-                    if (!targetUserId) {
-                        await interaction.editReply({ content: 'Could not extract user ID from the mention. Please ensure you are mentioning a valid user (e.g., `@username`).', flags: [MessageFlags.Ephemeral] });
-                        return;
-                    }
-                    // Attempt to fetch member to get their current tag
-                    let member = interaction.guild?.members.cache.get(targetUserId);
-                    if (!member && interaction.guild) {
-                        try {
-                            member = await interaction.guild.members.fetch(targetUserId);
-                        } catch (fetchError) {
-                            console.error(`[ERROR] /admin unban: Failed to fetch member ${targetUserId} from API: ${ensureString(fetchError.message)}.`, fetchError);
+                    let targetUserDiscordObject = interaction.options.getUser('user');
+                    let targetUserId = null;
+                    let usernameForLog = null;
+
+                    if (targetUserDiscordObject) {
+                        targetUserId = ensureString(targetUserDiscordObject.id);
+                        usernameForLog = ensureString(targetUserDiscordObject.tag);
+                    } else {
+                        const rawUserIdString = interaction.options.getString('user_id') || interaction.options.getString('user');
+                        if (rawUserIdString) {
+                            const extractedId = rawUserIdString.replace(/[^0-9]/g, '');
+                            if (extractedId) targetUserId = extractedId;
                         }
                     }
-                    const usernameForLog = member ? ensureString(member.user.tag) : `Unknown User (ID: ${targetUserId})`;
+
+                    if (!targetUserId) {
+                        await interaction.editReply({ content: 'Target user not found or could not be parsed from command options. Please ensure you are selecting a valid user.', flags: [MessageFlags.Ephemeral] });
+                        return;
+                    }
+
+                    // Attempt to fetch member to get their current tag if not already obtained
+                    if (!usernameForLog) {
+                        let member = interaction.guild?.members.cache.get(targetUserId);
+                        if (!member && interaction.guild) {
+                            try {
+                                member = await interaction.guild.members.fetch(targetUserId);
+                            } catch (fetchError) {
+                                console.error(`[ERROR] /admin unban: Failed to fetch member ${targetUserId} from API: ${ensureString(fetchError.message)}.`, fetchError);
+                            }
+                        }
+                        usernameForLog = member ? ensureString(member.user.tag) : `Unknown User (ID: ${targetUserId})`;
+                    }
 
                     const verifiedCollection = db.collection('verifiedUsers');
                     await verifiedCollection.updateOne(
@@ -682,7 +730,7 @@ async function main() {
                 }
             }
 
-            // --- /emergency subcommand group logic (UPDATED TO HANDLE STRING MENTION) ---
+            // --- /emergency subcommand group logic (UPDATED TO ROBUSTLY PARSE USER) ---
             else if (commandName === 'emergency') {
                 if (!isAuthorizedAdmin(userId)) {
                     await interaction.editReply({ content: 'You do not have permission to use emergency commands.', flags: [MessageFlags.Ephemeral] });
@@ -692,22 +740,38 @@ async function main() {
                 const subCommand = interaction.options.getSubcommand();
 
                 if (subCommand === 'verify') {
-                    const targetUserMentionString = interaction.options.getString('target_user_mention');
-                    const targetUserId = ensureString(targetUserMentionString).replace(/[<@!>]/g, '');
-                    if (!targetUserId) {
-                        await interaction.editReply({ content: 'Could not extract user ID from the mention. Please ensure you are mentioning a valid user (e.g., `@username`).', flags: [MessageFlags.Ephemeral] });
-                        return;
-                    }
-                     // Attempt to fetch member to get their current tag
-                    let member = interaction.guild?.members.cache.get(targetUserId);
-                    if (!member && interaction.guild) {
-                        try {
-                            member = await interaction.guild.members.fetch(targetUserId);
-                        } catch (fetchError) {
-                            console.error(`[ERROR] /emergency verify: Failed to fetch member ${targetUserId} from API: ${ensureString(fetchError.message)}.`, fetchError);
+                    let targetUserDiscordObject = interaction.options.getUser('user');
+                    let targetUserId = null;
+                    let usernameForLog = null;
+
+                    if (targetUserDiscordObject) {
+                        targetUserId = ensureString(targetUserDiscordObject.id);
+                        usernameForLog = ensureString(targetUserDiscordObject.tag);
+                    } else {
+                        const rawUserIdString = interaction.options.getString('user_id') || interaction.options.getString('user');
+                        if (rawUserIdString) {
+                            const extractedId = rawUserIdString.replace(/[^0-9]/g, '');
+                            if (extractedId) targetUserId = extractedId;
                         }
                     }
-                    const usernameForLog = member ? ensureString(member.user.tag) : `Unknown User (ID: ${targetUserId})`;
+
+                    if (!targetUserId) {
+                        await interaction.editReply({ content: 'Target user not found or could not be parsed from command options. Please ensure you are selecting a valid user.', flags: [MessageFlags.Ephemeral] });
+                        return;
+                    }
+
+                    // Attempt to fetch member to get their current tag if not already obtained
+                    if (!usernameForLog) {
+                        let member = interaction.guild?.members.cache.get(targetUserId);
+                        if (!member && interaction.guild) {
+                            try {
+                                member = await interaction.guild.members.fetch(targetUserId);
+                            } catch (fetchError) {
+                                console.error(`[ERROR] /emergency verify: Failed to fetch member ${targetUserId} from API: ${ensureString(fetchError.message)}.`, fetchError);
+                            }
+                        }
+                        usernameForLog = member ? ensureString(member.user.tag) : `Unknown User (ID: ${targetUserId})`;
+                    }
 
                     const db = dbClient.db('MineBotDB');
                     const verifiedCollection = db.collection('verifiedUsers');
@@ -715,7 +779,7 @@ async function main() {
                         { userId: targetUserId },
                         { $set: {
                             userId: targetUserId,
-                            username: usernameForLog, // Use fetched username if available
+                            username: usernameForLog, 
                             isVerified: true,
                             expiresAt: null,
                             verifiedAt: new Date(),
