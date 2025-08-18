@@ -2,7 +2,7 @@
 
 // --- Core Module Imports ---
 import { Client, GatewayIntentBits, Partials, PermissionFlagsBits, MessageFlags } from 'discord.js';
-import { MongoClient } = 'mongodb';
+import { MongoClient } from 'mongodb'; // CORRECTED: Changed '=' to 'from' here
 import { REST, Routes } from 'discord.js'; // For registering slash commands
 import crypto from 'crypto'; // Node.js built-in crypto module
 import express from 'express'; // Web server for Render health checks and self-ping
@@ -267,7 +267,7 @@ process.on('uncaughtException', (err) => {
     process.exit(1);
 });
 
-// --- Slash Command Definitions (Moved Here) ---
+// --- Slash Command Definitions ---
 const commands = [
     {
         name: 'verify',
@@ -433,8 +433,6 @@ async function main() {
         console.log(`🤖 ${ensureString(client.user.tag)} is online and ready to analyze mines!`);
 
         // --- Slash Command Registration (Runs only if REGISTER_COMMANDS_ENV is "true") ---
-        // This allows you to trigger registration by setting REGISTER_COMMANDS="true" once on Render.
-        // After successful registration, you can remove or set it to "false" to prevent re-registration.
         if (REGISTER_COMMANDS_ENV === "true") {
             console.log("[COMMAND_REGISTRATION] REGISTER_COMMANDS is true. Attempting to register slash commands...");
             const rest = new REST({ version: '10' }).setToken(BOT_TOKEN_FOR_REGISTRATION); // Uses environment variable for token!
@@ -524,7 +522,7 @@ async function main() {
                 console.log(`[DEBUG /verify] Initial targetUserDiscordObject: ${targetUserDiscordObject ? ensureString(targetUserDiscordObject.tag) : 'null/undefined'} (ID: ${targetUserDiscordObject ? ensureString(targetUserDiscordObject.id) : 'N/A'})`);
 
                 if (!targetUserDiscordObject) {
-                    await interaction.editReply({ content: 'Target user not found in command options. This might be a Discord issue or the command definition is out of sync. Please try again, ensuring you select a user from the auto-complete list. If the problem persists, commands might need to be re-registered.', flags: [MessageFlags.Ephemeral] });
+                    await interaction.editReply({ content: 'Target user not found in command options. This might indicate an outdated command definition on Discord. Please try again, ensuring you select a user from the auto-complete list. If the problem persists, commands might need to be re-registered.', flags: [MessageFlags.Ephemeral] });
                     return;
                 }
                 const targetUserId = ensureString(targetUserDiscordObject.id);
