@@ -1,19 +1,22 @@
 // index.js - The Mines Predictor Discord Bot (All-in-One with Hardcoded Registration & Enhanced Error Handling)
 
 // --- Core Module Imports ---
-import { Client, GatewayIntentBits, Partials, MessageFlags } from 'discord.js';
+import { Client, GatewayIntentBits, Partials, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { MongoClient } from 'mongodb';
 import { REST, Routes } from 'discord.js'; // For registering slash commands
 import crypto from 'crypto'; // Node.js built-in crypto module
 import express from 'express'; // Web server for Render health checks and self-ping
 
-// --- Configuration Constants (All Defined Here for Easy Editing) ---
+// --- Configuration Constants (All Defined Here) ---
+
 // =========================================================================
-// !!! IMPORTANT: FILL THESE OUT WITH YOUR BOT'S ACTUAL DISCORD DETAILS !!!
-// These are used for initial slash command registration.
-const CLIENT_ID_FOR_REGISTRATION = 'PASTE_YOUR_CLIENT_ID_HERE';    // Replace with your Bot's Application ID
-const GUILD_ID_FOR_REGISTRATION = 'PASTE_YOUR_GUILD_ID_HERE';      // Replace with your specific Guild (Server) ID for faster testing
-const BOT_TOKEN_FOR_REGISTRATION = 'PASTE_YOUR_BOT_TOKEN_HERE';    // Replace with your Bot Token (should match process.env.BOT_TOKEN)
+// !!! WARNING: THESE ARE HARDCODED FOR SLASH COMMAND REGISTRATION ONLY !!!
+// If this file is public, these values WILL BE EXPOSED.
+// Discord often invalidates tokens found in public code.
+// Your main bot login and MongoDB still use process.env.BOT_TOKEN and process.env.MONGO_URI.
+const CLIENT_ID_FOR_REGISTRATION = 'PASTE_YOUR_CLIENT_ID_HERE';    // Replace with your Client ID
+const GUILD_ID_FOR_REGISTRATION = 'PASTE_YOUR_GUILD_ID_HERE';      // Replace with your Guild ID (for faster local updates)
+const BOT_TOKEN_FOR_REGISTRATION = 'PASTE_YOUR_BOT_TOKEN_HERE';    // Replace with your Bot Token
 // =========================================================================
 
 // ONLY these Discord User IDs will have access to /admin, /emergency, and /verify commands.
@@ -23,16 +26,15 @@ const ADMIN_USER_IDS = [
 ];
 
 // Self-ping system configuration for Render free tier.
-// Render provides the public URL of your service via RENDER_EXTERNAL_URL.
 const SELF_PING_URL = process.env.RENDER_EXTERNAL_URL;
 const PING_INTERVAL_MS = 5 * 60 * 1000; // Ping every 5 minutes
 
-// MongoDB URI and Bot Token for client login should be set as environment variables in Render.
+// MongoDB URI should be set as an environment variable in Render.
 const MONGO_URI = process.env.MONGO_URI;
-const BOT_TOKEN = process.env.BOT_TOKEN;
 
-// Environment variable to control command registration. Set to "true" on Render ONCE to register.
-const REGISTER_COMMANDS_ENV = process.env.REGISTER_COMMANDS;
+// Discord Bot Token for client login should be set as an environment variable in Render.
+// This is separate from BOT_TOKEN_FOR_REGISTRATION if you choose to hardcode it above.
+const BOT_TOKEN = process.env.BOT_TOKEN;
 
 // --- Helper Functions ---
 function isAuthorizedAdmin(userId) {
@@ -75,7 +77,25 @@ async function fetchWithRetry(url, options, maxRetries = 3, baseDelay = 1000) {
     throw new Error('Max retries reached. Failed to fetch.');
 }
 
-// Existing calculateRollbetMines function (placeholder)
+// Moved startSelfPing to the top so it's defined before it's called.
+async function startSelfPing() {
+    console.log(`[DEBUG] startSelfPing function called.`);
+    if (!SELF_PING_URL) {
+        console.warn('SELF_PING_URL is not set. Self-pinging will not occur.');
+        return;
+    }
+    try {
+        const response = await fetch(ensureString(SELF_PING_URL)); // Ensured string conversion
+        if (response.ok) {
+            console.log(`Self-ping successful to ${ensureString(SELF_PING_URL)}`);
+        } else {
+            console.warn(`Self-ping failed to ${ensureString(SELF_PING_URL)} with status: ${ensureString(response.status)}`);
+        }
+    } catch (error) {
+        console.error(`Error during self-ping to ${ensureString(SELF_PING_URL)}:`, ensureString(error.message));
+    }
+}
+
 function calculateRollbetMines(serverSeed, clientSeed, nonce, numMines) {
     console.warn("WARNING: calculateRollbetMines is using a placeholder. Please implement Rollbet's actual provably fair algorithm.");
     if (numMines === 3 && ensureString(clientSeed).startsWith('test')) {
@@ -247,7 +267,7 @@ process.on('uncaughtException', (err) => {
     process.exit(1);
 });
 
-// --- Slash Command Definitions ---
+// --- Slash Command Definitions (Moved Here) ---
 const commands = [
     {
         name: 'verify',
@@ -408,29 +428,31 @@ const commands = [
         process.exit(1);
     }
 
-    // 3. Discord 'ready' event listener - includes command registration and self-ping setup
+    // 3. Discord 'ready' event listener - includes command registration
     client.on('ready', async () => {
         console.log(`🤖 ${ensureString(client.user.tag)} is online and ready to analyze mines!`);
 
-        // --- Slash Command Registration (Runs only if REGISTER_COMMANDS_ENV is "true") ---
-        if (REGISTER_COMMANDS_ENV === "true") {
+        // --- Slash Command Registration (Runs only if REGISTER_COMMANDS env var is "true") ---
+        // This allows you to trigger registration by setting REGISTER_COMMANDS="true" once on Render.
+        // After successful registration, you can remove or set it to "false" to prevent re-registration.
+        if (process.env.REGISTER_COMMANDS === "true") {
             console.log("[COMMAND_REGISTRATION] REGISTER_COMMANDS is true. Attempting to register slash commands...");
-            const rest = new REST({ version: '10' }).setToken(BOT_TOKEN_FOR_REGISTRATION);
+            const rest = new REST({ version: '10' }).setToken(BOT_TOKEN_FOR_REGISTRATION); // Uses hardcoded token for this
             try {
                 if (GUILD_ID_FOR_REGISTRATION && GUILD_ID_FOR_REGISTRATION !== 'PASTE_YOUR_GUILD_ID_HERE') {
+                    // Guild-specific commands (faster updates)
                     await rest.put(
                         Routes.applicationGuildCommands(CLIENT_ID_FOR_REGISTRATION, GUILD_ID_FOR_REGISTRATION),
                         { body: commands },
                     );
                     console.log(`[COMMAND_REGISTRATION] Successfully reloaded application (/) commands for guild ${ensureString(GUILD_ID_FOR_REGISTRATION)}.`);
-                } else if (CLIENT_ID_FOR_REGISTRATION && CLIENT_ID_FOR_REGISTRATION !== 'PASTE_YOUR_CLIENT_ID_HERE') {
+                } else {
+                    // Global commands (can take up to an hour to propagate)
                     await rest.put(
                         Routes.applicationCommands(CLIENT_ID_FOR_REGISTRATION),
                         { body: commands },
                     );
                     console.log(`[COMMAND_REGISTRATION] Successfully reloaded global application (/) commands.`);
-                } else {
-                    console.warn(`[COMMAND_REGISTRATION] CLIENT_ID_FOR_REGISTRATION or GUILD_ID_FOR_REGISTRATION not set. Cannot register commands.`);
                 }
             } catch (error) {
                 console.error('[COMMAND_REGISTRATION ERROR] Failed to register slash commands:', ensureString(error.message), error);
@@ -439,11 +461,11 @@ const commands = [
             console.log("[COMMAND_REGISTRATION] REGISTER_COMMANDS is not true. Skipping slash command registration.");
         }
 
-        // --- Self-Ping System ---
+
         if (SELF_PING_URL) {
             console.log(`[SETUP] SELF_PING_URL is set. Preparing self-ping system.`);
             console.log(`Starting self-ping system. Pinging ${ensureString(SELF_PING_URL)} every ${PING_INTERVAL_MS / 1000 / 60} minutes.`);
-            startSelfPing();
+            startSelfPing(); // Call the function
             setInterval(startSelfPing, PING_INTERVAL_MS);
         } else {
             console.warn('SELF_PING_URL environment variable not found. Self-ping system will not start. Bot may go idle on free tier.');
@@ -463,24 +485,23 @@ const commands = [
     });
 
     client.on('interactionCreate', async interaction => {
-        // Defer reply at the very start for all command interactions, but only if they haven't been replied to or deferred yet.
-        // This addresses Discord's 3-second response timeout.
+        // IMPORTANT: Defer reply at the very start for all commands.
+        // This prevents the "Unknown interaction" error if the bot takes too long to respond (3 seconds).
         if (interaction.isCommand() && !interaction.deferred && !interaction.replied) {
             try {
-                // By default, defer as ephemeral: false, as many command responses should be visible.
-                // Specific commands can override this later with flags: [MessageFlags.Ephemeral] in editReply.
-                await interaction.deferReply({ ephemeral: false });
+                await interaction.deferReply({ ephemeral: false }); // Default to non-ephemeral, can be overridden later
                 console.log(`[DEBUG] Deferred reply for command: /${ensureString(interaction.commandName)} by ${ensureString(interaction.user.tag)}`);
             } catch (deferError) {
-                // If deferReply itself fails, it's likely the interaction is already invalid/expired.
-                // Log the error and attempt a final ephemeral reply as a last resort, if not already replied.
+                // This block should ideally not be hit if the interaction is valid.
+                // If it is hit, it means the interaction was already invalid or expired.
                 console.error(`[ERROR] Failed to defer reply for command /${ensureString(interaction.commandName)}: ${ensureString(deferError.message)}`, deferError);
-                if (!interaction.replied) {
-                    try {
-                        await interaction.reply({ content: 'An unexpected issue occurred. Please try again.', flags: [MessageFlags.Ephemeral] });
-                    } catch (fallbackError) {
-                        console.error(`[ERROR] Failed final fallback reply for /${ensureString(interaction.commandName)}: ${ensureString(fallbackError.message)}`, fallbackError);
+                // Attempt a quick ephemeral reply if deferral failed and no reply has been sent yet
+                try {
+                    if (!interaction.replied) {
+                         await interaction.reply({ content: 'An unexpected issue occurred. Please try again.', flags: [MessageFlags.Ephemeral] }).catch(err => console.error(`[ERROR] Failed fallback reply (defer fail): ${ensureString(err.message)}`));
                     }
+                } catch (fallbackError) {
+                    console.error(`[ERROR] Failed to send fallback reply for /${ensureString(interaction.commandName)}: ${ensureString(fallbackError.message)}`, fallbackError);
                 }
                 return; // Stop further processing for this interaction
             }
@@ -490,36 +511,35 @@ const commands = [
 
         const { commandName } = interaction;
         const userId = ensureString(interaction.user.id);
-        const userTag = ensureString(interaction.user.tag); // Use ensureString for userTag too
+        const userTag = ensureString(interaction.user.tag);
 
         try {
             // --- /verify Command Logic ---
             if (commandName === 'verify') {
                 if (!isAuthorizedAdmin(userId)) {
-                    // Use editReply because the interaction was already deferred.
                     await interaction.editReply({ content: 'You do not have permission to use this command. Only designated administrators can verify users.', flags: [MessageFlags.Ephemeral] });
                     return;
                 }
 
-                // Get the user object from the command options.
-                // If the command definition has required: true, targetUser will not be null/undefined.
+                // IMPORTANT FIX: Ensure 'user' option is correctly retrieved.
+                // If it's null even with 'required: true', it indicates a command registration mismatch
+                // or a Discord client issue. We add a specific check here.
                 const targetUserDiscordObject = interaction.options.getUser('user');
                 console.log(`[DEBUG /verify] Initial targetUserDiscordObject: ${targetUserDiscordObject ? ensureString(targetUserDiscordObject.tag) : 'null/undefined'} (ID: ${targetUserDiscordObject ? ensureString(targetUserDiscordObject.id) : 'N/A'})`);
 
                 if (!targetUserDiscordObject) {
-                    // This case should ideally not be hit if 'user' option is required.
-                    await interaction.editReply({ content: 'Target user not found in command options. This might indicate an outdated command definition on Discord. Please try again, ensuring you select a user from the auto-complete list. If the problem persists, commands might need to be re-registered.', flags: [MessageFlags.Ephemeral] });
+                    await interaction.editReply({ content: 'Target user not found in command options. This might be a Discord issue or the command definition is out of sync. Please try again, ensuring you select a user from the auto-complete list. If the problem persists, commands might need to be re-registered.', flags: [MessageFlags.Ephemeral] });
                     return;
                 }
                 const targetUserId = ensureString(targetUserDiscordObject.id);
 
                 console.log(`[DEBUG /verify] Resolved targetUserId from options: ${targetUserId}`);
 
-                // Attempt to fetch the guild member object.
-                // First, check the cache. If not found, try to fetch via API for robustness.
+                // Attempt to fetch the member, first from cache, then via API if not found
                 let member = interaction.guild?.members.cache.get(targetUserId);
                 console.log(`[DEBUG /verify] Member from cache: ${member ? ensureString(member.user.tag) : 'null/undefined'} (ID: ${member ? ensureString(member.id) : 'N/A'})`);
 
+                // If member not in cache and we are in a guild context, try to fetch it
                 if (!member && interaction.guild) {
                     console.log(`[DEBUG /verify] Member ${targetUserId} not in cache, attempting to fetch from API for guild ${ensureString(interaction.guild.id)}.`);
                     try {
@@ -583,7 +603,7 @@ const commands = [
                     console.log(`Sent verification successful DM to ${ensureString(member.user.tag)}`);
                 } catch (dmError) {
                     console.error(`Could not send verification successful DM to ${ensureString(member.user.tag)}. Error: ${ensureString(dmError.message)}. They might have DMs disabled.`, dmError);
-                    await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${ensureString(member.user.tag)} with important information, but their DMs might be disabled. Error: ${ensureString(dmError.message)})`, ephemeral: false });
+                    await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${ensureString(member.user.tag)} with important information, but their DMs might be disabled.)`, ephemeral: false });
                 }
             }
 
@@ -824,10 +844,6 @@ Why submit a result? Your submissions help train the prediction model, making it
                     return;
                 }
 
-                // AI Analysis Section for /predict
-                // The deferReply was already called at the start of interactionCreate.
-                // Now, proceed with fetching data and calling AI.
-
                 const recentGameResults = await gameResultsCollection.find({})
                                                              .sort({ submittedAt: -1 })
                                                              .limit(50)
@@ -850,10 +866,11 @@ Why submit a result? Your submissions help train the prediction model, making it
             }
         } catch (error) {
             console.error(`[ERROR] Error handling command '${ensureString(commandName)}' for user ${ensureString(userTag)} (${ensureString(userId)}):`, ensureString(error.message), error);
-            // Ensure this uses editReply because deferReply was called at the start.
-            // A final check `if (interaction.deferred || interaction.replied)` is not strictly needed
-            // here because deferReply is always called at the very beginning for commands.
-            await interaction.editReply({ content: 'An unexpected error occurred while processing your command. Please try again later.', flags: [MessageFlags.Ephemeral] }).catch(err => console.error(`[ERROR] Failed to send error editReply: ${ensureString(err.message)}`, err));
+            if (interaction.deferred || interaction.replied) {
+                await interaction.editReply({ content: 'An unexpected error occurred while processing your command. Please try again later.', flags: [MessageFlags.Ephemeral] }).catch(err => console.error(`[ERROR] Failed to send error editReply: ${ensureString(err.message)}`, err));
+            } else {
+                await interaction.reply({ content: 'An unexpected error occurred. Please try again later.', flags: [MessageFlags.Ephemeral] }).catch(err => console.error(`[ERROR] Failed to send error reply: ${ensureString(err.message)}`, err));
+            }
         }
     });
 
