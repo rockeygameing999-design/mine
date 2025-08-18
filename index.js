@@ -245,10 +245,23 @@ const commands = [
         .addUserOption(option => option.setName('user').setDescription('The user to verify.').setRequired(true))
         .addStringOption(option => option.setName('duration').setDescription('Duration of the verification.').setRequired(true).addChoices(
             { name: 'Permanent', value: 'permanent' },
-            { name: '7 Days', value: '7d' },
+            { name: '1 Day', value: '1d' },
+            { name: '2 Days', value: '2d' },
+            { name: '3 Days', value: '3d' },
+            { name: '4 Days', value: '4d' },
+            { name: '5 Days', value: '5d' },
+            { name: '6 Days', value: '6d' },
+            { name: '7 Days', value: '7d' }, // Kept existing 7d for consistency
             { name: '30 Days', value: '30d' },
             { name: '90 Days', value: '90d' },
-            { name: '365 Days', value: '365d' }
+            { name: '365 Days', value: '365d' },
+            { name: '1 Hour', value: '1h' },
+            { name: '2 Hours', value: '2h' },
+            { name: '3 Hours', value: '3h' },
+            { name: '4 Hours', value: '4h' },
+            { name: '5 Hours', value: '5h' },
+            { name: '6 Hours', value: '6h' },
+            { name: '12 Hours', value: '12h' }
         )),
     new SlashCommandBuilder().setName('admin').setDescription('[ADMIN] Administrative commands.')
         .addSubcommand(subcommand => subcommand.setName('stats').setDescription('View bot statistics.'))
@@ -489,18 +502,28 @@ ${recentResults.map(r => `Mines: ${r.numMines}, Positions: [${r.minePositions.jo
 
             // --- ADMIN SUBCOMMANDS LOGIC (using the resolved targetUserId and targetUsername) ---
             if (commandName === 'verify') { // This is for the top-level /verify command
-                const duration = options.getString('duration');
+                const durationOption = options.getString('duration'); // Get the string value from Discord
                 let expiresAt = null;
-                let durationText = 'Permanent';
+                let durationText = 'Permanent'; // Default
 
-                if (duration !== 'permanent') {
+                if (durationOption !== 'permanent') {
                     const now = new Date();
-                    const days = parseInt(duration.replace('d', ''));
-                    if (isNaN(days) || days <= 0) { // Add check for valid number of days
-                        return interaction.editReply('❌ Invalid duration specified. Please use "permanent", "7d", "30d", etc.');
+                    const value = parseInt(durationOption.slice(0, -1)); // Get the number part (e.g., '7' from '7d')
+                    const unit = durationOption.slice(-1); // Get the unit ('d' or 'h')
+
+                    if (isNaN(value) || value <= 0) {
+                        return interaction.editReply('❌ Invalid duration value. Please use a positive number followed by "d" (days) or "h" (hours), or "permanent".');
                     }
-                    expiresAt = new Date(now.setDate(now.getDate() + days));
-                    durationText = `${days} Days`;
+
+                    if (unit === 'd') {
+                        expiresAt = new Date(now.setDate(now.getDate() + value));
+                        durationText = `${value} Day${value > 1 ? 's' : ''}`;
+                    } else if (unit === 'h') {
+                        expiresAt = new Date(now.setHours(now.getHours() + value));
+                        durationText = `${value} Hour${value > 1 ? 's' : ''}`;
+                    } else {
+                        return interaction.editReply('❌ Invalid duration format. Use "Xd" for days or "Xh" for hours (e.g., "7d", "12h").');
+                    }
                 }
 
                 const verificationData = {
