@@ -1,6 +1,6 @@
-// index.js - The Mines Predictor Discord Bot
+// index.js - The Mines Predictor Discord Bot (All-in-One Version)
 
-// --- Core Module Imports (Always at the very top) ---
+// --- Core Module Imports ---
 import { Client, GatewayIntentBits, Partials, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { MongoClient } from 'mongodb';
 import { REST, Routes } from 'discord.js'; // For registering slash commands
@@ -8,6 +8,17 @@ import crypto from 'crypto'; // Node.js built-in crypto module
 import express from 'express'; // Web server for Render health checks and self-ping
 
 // --- Configuration Constants (All Defined Here) ---
+
+// =========================================================================
+// !!! WARNING: THESE ARE HARDCODED FOR SLASH COMMAND REGISTRATION ONLY !!!
+// If this file is public, these values WILL BE EXPOSED.
+// Discord often invalidates tokens found in public code.
+// Your main bot login and MongoDB still use process.env.BOT_TOKEN and process.env.MONGO_URI.
+const CLIENT_ID_FOR_REGISTRATION = 'PASTE_YOUR_CLIENT_ID_HERE';    // Replace with your Client ID
+const GUILD_ID_FOR_REGISTRATION = 'PASTE_YOUR_GUILD_ID_HERE';      // Replace with your Guild ID (for faster local updates)
+const BOT_TOKEN_FOR_REGISTRATION = 'PASTE_YOUR_BOT_TOKEN_HERE';    // Replace with your Bot Token
+// =========================================================================
+
 // ONLY these Discord User IDs will have access to /admin, /emergency, and /verify commands.
 const ADMIN_USER_IDS = [
     '862245514313203712',  // Replace with your first admin's actual Discord User ID
@@ -21,26 +32,15 @@ const PING_INTERVAL_MS = 5 * 60 * 1000; // Ping every 5 minutes
 // MongoDB URI should be set as an environment variable in Render.
 const MONGO_URI = process.env.MONGO_URI;
 
-// Discord Bot Token should be set as an environment variable in Render.
+// Discord Bot Token for client login should be set as an environment variable in Render.
+// This is separate from BOT_TOKEN_FOR_REGISTRATION if you choose to hardcode it above.
 const BOT_TOKEN = process.env.BOT_TOKEN;
 
-// --- Helper Functions (All Defined Globally and Synchronously First) ---
-
-/**
- * Checks if a given Discord user ID is an authorized administrator.
- * @param {string} userId The Discord user ID to check.
- * @returns {boolean} True if the user is an admin, false otherwise.
- */
+// --- Helper Functions ---
 function isAuthorizedAdmin(userId) {
     return ADMIN_USER_IDS.includes(ensureString(userId));
 }
 
-/**
- * Ensures a value is a string. If null or undefined, returns 'unknown'.
- * This prevents 'Cannot read properties of null (reading 'replace')' errors.
- * @param {*} value The value to convert to a string.
- * @returns {string} The string representation of the value, or 'unknown'.
- */
 function ensureString(value) {
     if (value === null || value === undefined) {
         return 'unknown';
@@ -48,22 +48,13 @@ function ensureString(value) {
     return String(value);
 }
 
-/**
- * Executes a fetch request with exponential backoff for API calls.
- * @param {string} url The URL to fetch.
- * @param {object} options Fetch options (method, headers, body).
- * @param {number} maxRetries Maximum number of retries.
- * @param {number} baseDelay Base delay in milliseconds for backoff.
- * @returns {Promise<Response>} The fetch response.
- * @throws {Error} If all retries fail or response is not OK.
- */
 async function fetchWithRetry(url, options, maxRetries = 3, baseDelay = 1000) {
     let retries = 0;
     while (retries < maxRetries) {
         try {
             console.log(`[DEBUG] Fetching ${url}, attempt ${retries + 1}/${maxRetries}`);
             const response = await fetch(url, options);
-            if (response.status === 429) { // Rate limit
+            if (response.status === 429) {
                 const delay = baseDelay * Math.pow(2, retries);
                 console.warn(`[WARN] Rate limit hit for ${url}. Retrying in ${delay / 1000}s...`);
                 await new Promise(res => setTimeout(res, delay));
@@ -86,9 +77,6 @@ async function fetchWithRetry(url, options, maxRetries = 3, baseDelay = 1000) {
     throw new Error('Max retries reached. Failed to fetch.');
 }
 
-/**
- * Handles self-pinging the bot's own URL to keep it awake on Render.
- */
 async function startSelfPing() {
     console.log(`[DEBUG] startSelfPing function called.`);
     if (!SELF_PING_URL) {
@@ -107,36 +95,23 @@ async function startSelfPing() {
     }
 }
 
-/**
- * Calculates the provably fair mine positions for a Rollbet game.
- * IMPORTANT: YOU MUST IMPLEMENT THIS FUNCTION ACCURATELY BASED ON ROLLBET'S PUBLICLY DOCUMENTED ALGORITHM.
- * @param {string} serverSeed The server seed (usually the unhashed one provided by the casino for verification).
- * @param {string} clientSeed The client seed.
- * @param {number} nonce The game nonce.
- * @param {number} numMines The number of mines for the game.
- * @returns {number[]} An array of mine positions (0-24) sorted in ascending order.
- */
 function calculateRollbetMines(serverSeed, clientSeed, nonce, numMines) {
     console.warn("WARNING: calculateRollbetMines is using a placeholder. Please implement Rollbet's actual provably fair algorithm.");
-    // This is a placeholder. Replace with Rollbet's actual algorithm.
     if (numMines === 3 && ensureString(clientSeed).startsWith('test')) {
-        return [1, 5, 10]; // Example: predictable mines for a 'test' client seed
+        return [1, 5, 10];
     }
     return [];
 }
 
-// --- MongoDB Connection and Cache Management Variables and Functions ---
-let dbClient; // MongoClient instance, declared globally
-let verifiedUsersCache = new Map(); // Cache for verified users, declared globally
+// --- MongoDB Connection and Cache Management ---
+let dbClient;
+let verifiedUsersCache = new Map();
 
-/**
- * Establishes a connection to MongoDB.
- */
 async function connectToMongoDB() {
     console.log(`[DEBUG] connectToMongoDB function called. MONGO_URI: ${MONGO_URI ? 'Set' : 'Not Set'}`);
     if (!MONGO_URI) {
         console.error('MONGO_URI environment variable is not set. Cannot connect to MongoDB.');
-        throw new Error("MongoDB URI is not set."); // Throw to be caught by main catch block
+        throw new Error("MongoDB URI is not set.");
     }
     try {
         dbClient = new MongoClient(MONGO_URI);
@@ -145,13 +120,10 @@ async function connectToMongoDB() {
         await loadInitialVerifiedUsersCache();
     } catch (error) {
         console.error('Failed to connect to MongoDB:', ensureString(error.message));
-        throw new Error(`MongoDB connection failed: ${ensureString(error.message)}`); // Re-throw to propagate
+        throw new Error(`MongoDB connection failed: ${ensureString(error.message)}`);
     }
 }
 
-/**
- * Loads verified users into an in-memory cache from MongoDB.
- */
 async function loadInitialVerifiedUsersCache() {
     console.log(`[DEBUG] loadInitialVerifiedUsersCache function called.`);
     if (!dbClient || !dbClient.db) {
@@ -159,7 +131,7 @@ async function loadInitialVerifiedUsersCache() {
         return;
     }
     try {
-        const db = dbClient.db('MineBotDB'); // REPLACE WITH YOUR ACTUAL DATABASE NAME
+        const db = dbClient.db('MineBotDB');
         const collection = db.collection('verifiedUsers');
         const users = await collection.find({}).toArray();
         verifiedUsersCache = new Map(users.map(user => [user.userId, user]));
@@ -170,11 +142,6 @@ async function loadInitialVerifiedUsersCache() {
 }
 
 // --- Gemini API Integration Function ---
-/**
- * Calls the Gemini API to generate text-based analysis.
- * @param {string} prompt The text prompt for the AI.
- * @returns {Promise<string>} The AI-generated text.
- */
 async function callGeminiAPI(prompt) {
     console.log(`[DEBUG] callGeminiAPI function called with prompt: ${ensureString(prompt).substring(0, 50)}...`);
     const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
@@ -202,7 +169,7 @@ async function callGeminiAPI(prompt) {
     }
 }
 
-// --- Discord Message Template Functions (All Defined Here) ---
+// --- Discord Message Template Functions ---
 const getWelcomeMessage = (username) => `
 Hello ${ensureString(username)}, welcome to the community!
 
@@ -264,19 +231,19 @@ You can no longer use the \`/predict\` command.
 To regain access, please contact an admin for re-verification, or continue contributing game results via \`/submitresult\` for potential free access!
 `;
 
-// --- Discord Client Setup (After all constants and functions) ---
+// --- Discord Client Setup ---
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.DirectMessages,
-        GatewayIntentBits.GuildMembers, // Crucial for member fetching and caching
+        GatewayIntentBits.GuildMembers,
         GatewayIntentBits.MessageContent,
     ],
     partials: [Partials.Channel, Partials.Message, Partials.GuildMember],
 });
 
-// --- HTTP Server (for Render Health Checks & Self-Ping - Independent Process) ---
+// --- HTTP Server (for Render Health Checks & Self-Ping) ---
 const app = express();
 const PORT = process.env.PORT || 10000;
 
@@ -288,49 +255,217 @@ app.listen(PORT, () => {
     console.log(`🌐 HTTP server running on port ${PORT}`);
 });
 
-// --- GLOBAL ERROR HANDLING (CRITICAL FOR DEBUGGING UNCAUGHT ERRORS) ---
+// --- GLOBAL ERROR HANDLING ---
 process.on('unhandledRejection', (reason, promise) => {
     console.error(`[FATAL ERROR] Unhandled Rejection at: ${promise}\nReason: ${ensureString(reason?.message || reason)}`, reason);
-    process.exit(1); // Exit to force a restart on Render if an unhandled promise rejection occurs
+    process.exit(1);
 });
 
 process.on('uncaughtException', (err) => {
     console.error(`[FATAL ERROR] Uncaught Exception: ${ensureString(err.message)}`, err);
-    process.exit(1); // Exit to force a restart on Render if an uncaught synchronous exception occurs
+    process.exit(1);
 });
 
+// --- Slash Command Definitions (Moved Here) ---
+const commands = [
+    {
+        name: 'verify',
+        description: 'Admin: Verifies a user by ID for permanent or time-based access.',
+        options: [
+            {
+                name: 'user',
+                type: 6, // USER type - CRITICAL for user mentions
+                description: 'The user (by ID or mention) to verify.',
+                required: true,
+            },
+            {
+                name: 'duration',
+                type: 3, // STRING type
+                description: 'Verification duration (e.g., permanent, 7d, 30d, 90d, 365d).',
+                required: true,
+                choices: [
+                    { name: 'Permanent', value: 'permanent' },
+                    { name: '7 Days', value: '7d' },
+                    { name: '30 Days', value: '30d' },
+                    { name: '90 Days', value: '90d' },
+                    { name: '365 Days', value: '365d' },
+                ],
+            },
+        ],
+    },
+    {
+        name: 'admin',
+        description: 'Administrator commands for bot management.',
+        options: [
+            {
+                name: 'revoke',
+                description: 'Revoke a user\'s access to the prediction service.',
+                type: 1, // SUB_COMMAND
+                options: [
+                    {
+                        name: 'user',
+                        type: 6, // USER type
+                        description: 'The user to revoke access from.',
+                        required: true,
+                    },
+                ],
+            },
+            {
+                name: 'stats',
+                description: 'Display bot statistics.',
+                type: 1, // SUB_COMMAND
+            },
+            {
+                name: 'unban',
+                description: 'Unban a user from submitting results.',
+                type: 1, // SUB_COMMAND
+                options: [
+                    {
+                        name: 'user',
+                        type: 6, // USER type
+                        description: 'The user to unban.',
+                        required: true,
+                    },
+                ],
+            },
+        ],
+    },
+    {
+        name: 'emergency',
+        description: 'Emergency administrator commands (use with caution).',
+        options: [
+            {
+                name: 'verify',
+                description: 'Force verify a user by ID (admin use only).',
+                type: 1, // SUB_COMMAND
+                options: [
+                    {
+                        name: 'user',
+                        type: 6, // USER type
+                        description: 'The user to force verify.',
+                        required: true,
+                    },
+                ],
+            },
+        ],
+    },
+    {
+        name: 'how_to_submit_result',
+        description: 'Shows instructions on how to submit a game result.',
+    },
+    {
+        name: 'leaderboard',
+        description: 'Shows users who submitted the most results.',
+    },
+    {
+        name: 'myresult',
+        description: 'Shows how many results you have submitted.',
+    },
+    {
+        name: 'submitresult',
+        description: 'Submits your game results to improve bot data collection and validation.',
+        options: [
+            {
+                name: 'server_seed_hash',
+                type: 3, // STRING type
+                description: 'The Server Seed Hash from your game.',
+                required: true,
+            },
+            {
+                name: 'client_seed',
+                type: 3, // STRING type
+                description: 'The Client Seed from your game.',
+                required: true,
+            },
+            {
+                name: 'nonce',
+                type: 4, // INTEGER type
+                description: 'The Nonce from your game.',
+                required: true,
+            },
+            {
+                name: 'num_mines',
+                type: 4, // INTEGER type
+                description: 'The total number of mines in the game (e.g., 5).',
+                required: true,
+                min_value: 1,
+                max_value: 24,
+            },
+            {
+                name: 'mine_positions',
+                type: 3, // STRING type (e.g., "3,7,12,18,22")
+                description: 'Comma-separated list of mine positions (0-24).',
+                required: true,
+            },
+        ],
+    },
+    {
+       name: 'predict',
+       description: 'Analyze past game data (requires verification).',
+    },
+];
+
 // --- Discord Client Event Listeners and Main Execution Logic ---
-// Wrapped in an async IIFE to ensure sequential execution of setup.
 (async () => {
-    // 1. Connect to MongoDB first to ensure database is ready
+    // 1. Connect to MongoDB first
     console.log("[SETUP] Attempting to connect to MongoDB...");
     try {
         await connectToMongoDB();
         console.log("[SETUP] MongoDB connection and cache load complete.");
     } catch (error) {
         console.error(`[SETUP ERROR] Critical: Failed to establish MongoDB connection. Bot cannot proceed.`, ensureString(error.message));
-        process.exit(1); // Exit if MongoDB connection fails at startup
+        process.exit(1);
     }
 
     // 2. Login to Discord
     console.log("[SETUP] Attempting Discord client login...");
     try {
-        await client.login(BOT_TOKEN);
+        await client.login(BOT_TOKEN); // Uses BOT_TOKEN from Render environment variables
         console.log("[SETUP] Discord client login successful.");
     } catch (error) {
         console.error("[SETUP ERROR] Critical: Failed to login to Discord. Bot cannot proceed.", ensureString(error.message));
-        process.exit(1); // Exit if Discord login fails
+        process.exit(1);
     }
 
-    // 3. Setup Discord 'ready' event listener (will fire once bot is connected)
+    // 3. Discord 'ready' event listener - includes command registration
     client.on('ready', async () => {
         console.log(`🤖 ${ensureString(client.user.tag)} is online and ready to analyze mines!`);
+
+        // --- Slash Command Registration (Runs only if REGISTER_COMMANDS env var is "true") ---
+        // This allows you to trigger registration by setting REGISTER_COMMANDS="true" once on Render.
+        // After successful registration, you can remove or set it to "false" to prevent re-registration.
+        if (process.env.REGISTER_COMMANDS === "true") {
+            console.log("[COMMAND_REGISTRATION] REGISTER_COMMANDS is true. Attempting to register slash commands...");
+            const rest = new REST({ version: '10' }).setToken(BOT_TOKEN_FOR_REGISTRATION); // Uses hardcoded token for this
+            try {
+                if (GUILD_ID_FOR_REGISTRATION && GUILD_ID_FOR_REGISTRATION !== 'PASTE_YOUR_GUILD_ID_HERE') {
+                    // Guild-specific commands (faster updates)
+                    await rest.put(
+                        Routes.applicationGuildCommands(CLIENT_ID_FOR_REGISTRATION, GUILD_ID_FOR_REGISTRATION),
+                        { body: commands },
+                    );
+                    console.log(`[COMMAND_REGISTRATION] Successfully reloaded application (/) commands for guild ${GUILD_ID_FOR_REGISTRATION}.`);
+                } else {
+                    // Global commands (can take up to an hour to propagate)
+                    await rest.put(
+                        Routes.applicationCommands(CLIENT_ID_FOR_REGISTRATION),
+                        { body: commands },
+                    );
+                    console.log(`[COMMAND_REGISTRATION] Successfully reloaded global application (/) commands.`);
+                }
+            } catch (error) {
+                console.error('[COMMAND_REGISTRATION ERROR] Failed to register slash commands:', ensureString(error.message), error);
+            }
+        } else {
+            console.log("[COMMAND_REGISTRATION] REGISTER_COMMANDS is not true. Skipping slash command registration.");
+        }
+
 
         if (SELF_PING_URL) {
             console.log(`[SETUP] SELF_PING_URL is set. Preparing self-ping system.`);
             console.log(`Starting self-ping system. Pinging ${SELF_PING_URL} every ${PING_INTERVAL_MS / 1000 / 60} minutes.`);
-            startSelfPing(); // Initial ping
-            setInterval(startSelfPing, PING_INTERVAL_MS); // Subsequent pings
+            startSelfPing();
+            setInterval(startSelfPing, PING_INTERVAL_MS);
         } else {
             console.warn('SELF_PING_URL environment variable not found. Self-ping system will not start. Bot may go idle on free tier.');
         }
@@ -349,10 +484,9 @@ process.on('uncaughtException', (err) => {
     });
 
     client.on('interactionCreate', async interaction => {
-        // [IMPORTANT] Defer reply immediately for all commands to prevent "Application did not respond"
         if (interaction.isCommand() && !interaction.deferred && !interaction.replied) {
             try {
-                await interaction.deferReply({ ephemeral: false }); // Defer to buy time, not always ephemeral
+                await interaction.deferReply({ ephemeral: false });
                 console.log(`[DEBUG] Deferred reply for command: /${ensureString(interaction.commandName)} by ${ensureString(interaction.user.tag)}`);
             } catch (deferError) {
                 console.error(`[ERROR] Failed to defer reply for command /${ensureString(interaction.commandName)}: ${ensureString(deferError.message)}`, deferError);
@@ -363,10 +497,10 @@ process.on('uncaughtException', (err) => {
                 } catch (fallbackError) {
                     console.error(`[ERROR] Failed to send fallback reply for /${ensureString(interaction.commandName)}: ${ensureString(fallbackError.message)}`, fallbackError);
                 }
-                return; // Stop processing this interaction if deferal failed
+                return;
             }
         } else if (!interaction.isCommand()) {
-            return; // Only process commands for this listener
+            return;
         }
 
         const { commandName } = interaction;
@@ -374,18 +508,18 @@ process.on('uncaughtException', (err) => {
         const userTag = ensureString(interaction.user.tag);
 
         try {
-            // --- /verify Command Logic (Admin only) ---
+            // --- /verify Command Logic ---
             if (commandName === 'verify') {
                 if (!isAuthorizedAdmin(userId)) {
                     await interaction.editReply({ content: 'You do not have permission to use this command. Only designated administrators can verify users.', flags: [MessageFlags.Ephemeral] });
                     return;
                 }
 
-                const targetUserDiscordObject = interaction.options.getUser('user'); // This is Discord.User object, not necessarily a guild member
+                const targetUserDiscordObject = interaction.options.getUser('user');
                 console.log(`[DEBUG /verify] Initial targetUserDiscordObject: ${targetUserDiscordObject ? targetUserDiscordObject.tag : 'null/undefined'} (ID: ${targetUserDiscordObject ? targetUserDiscordObject.id : 'N/A'})`);
 
                 if (!targetUserDiscordObject) {
-                    await interaction.editReply({ content: 'Target user not found in command options. Please provide a valid user.', flags: [MessageFlags.Ephemeral] });
+                    await interaction.editReply({ content: 'Target user not found in command options. Please provide a valid user. (Discord did not send user data for the "user" option.)', flags: [MessageFlags.Ephemeral] });
                     return;
                 }
                 const targetUserId = ensureString(targetUserDiscordObject.id);
@@ -395,7 +529,6 @@ process.on('uncaughtException', (err) => {
                 let member = interaction.guild?.members.cache.get(targetUserId);
                 console.log(`[DEBUG /verify] Member from cache: ${member ? member.user.tag : 'null/undefined'} (ID: ${member ? member.id : 'N/A'})`);
 
-
                 if (!member && interaction.guild) {
                     console.log(`[DEBUG /verify] Member ${targetUserId} not in cache, attempting to fetch from API for guild ${ensureString(interaction.guild.id)}.`);
                     try {
@@ -403,7 +536,7 @@ process.on('uncaughtException', (err) => {
                         console.log(`[DEBUG /verify] Successfully fetched member ${member.user.tag} (ID: ${member.id}) from API.`);
                     } catch (fetchError) {
                         console.error(`[ERROR] /verify: Failed to fetch member ${targetUserId} from API: ${ensureString(fetchError.message)}`, fetchError);
-                        member = null; // Ensure member is null if fetch fails
+                        member = null;
                     }
                 }
 
@@ -412,7 +545,6 @@ process.on('uncaughtException', (err) => {
                     return;
                 }
                 console.log(`[DEBUG] /verify: Final member found: ${ensureString(member.user.tag)} (ID: ${ensureString(member.id)})`);
-
 
                 const durationOption = interaction.options.getString('duration');
                 let expiresAt = null;
@@ -663,7 +795,7 @@ Why submit a result? Your submissions help train the prediction model, making it
                 }
             }
 
-            // --- /predict Command Logic (with AI analysis) ---
+            // --- /predict Command Logic ---
             else if (commandName === 'predict') {
                 if (!dbClient || !dbClient.db) {
                      await interaction.editReply({ content: 'Database is not connected. Please inform the bot administrator.', flags: [MessageFlags.Ephemeral] });
@@ -731,166 +863,3 @@ Why submit a result? Your submissions help train the prediction model, making it
     });
 
 })(); // End of Main Execution Logic IIFE
-
-// --- Slash Command Registration (Run this section ONCE manually or in a separate deploy script) ---
-/*
-// This block should be run once to register your slash commands with Discord.
-// You usually run this in a separate temporary script, or uncomment, run, then comment out again.
-// Make sure to replace 'YOUR_CLIENT_ID' with your bot's actual client ID from Discord Developer Portal.
-
-const commands = [
-    {
-        name: 'verify',
-        description: 'Admin: Verifies a user by ID for permanent or time-based access.',
-        options: [
-            {
-                name: 'user',
-                type: 6, // USER type
-                description: 'The user (by ID or mention) to verify.',
-                required: true,
-            },
-            {
-                name: 'duration',
-                type: 3, // STRING type
-                description: 'Verification duration (e.g., permanent, 7d, 30d, 90d, 365d).',
-                required: true,
-                choices: [
-                    { name: 'Permanent', value: 'permanent' },
-                    { name: '7 Days', value: '7d' },
-                    { name: '30 Days', value: '30d' },
-                    { name: '90 Days', value: '90d' },
-                    { name: '365 Days', value: '365d' },
-                ],
-            },
-        ],
-    },
-    {
-        name: 'admin',
-        description: 'Administrator commands for bot management.',
-        options: [
-            {
-                name: 'revoke',
-                description: 'Revoke a user\'s access to the prediction service.',
-                type: 1, // SUB_COMMAND
-                options: [
-                    {
-                        name: 'user',
-                        type: 6, // USER type
-                        description: 'The user to revoke access from.',
-                        required: true,
-                    },
-                ],
-            },
-            {
-                name: 'stats',
-                description: 'Display bot statistics.',
-                type: 1, // SUB_COMMAND
-            },
-            {
-                name: 'unban',
-                description: 'Unban a user from submitting results.',
-                type: 1, // SUB_COMMAND
-                options: [
-                    {
-                        name: 'user',
-                        type: 6, // USER type
-                        description: 'The user to unban.',
-                        required: true,
-                    },
-                ],
-            },
-        ],
-    },
-    {
-        name: 'emergency',
-        description: 'Emergency administrator commands (use with caution).',
-        options: [
-            {
-                name: 'verify',
-                description: 'Force verify a user by ID (admin use only).',
-                type: 1, // SUB_COMMAND
-                options: [
-                    {
-                        name: 'user',
-                        type: 6, // USER type
-                        description: 'The user to force verify.',
-                        required: true,
-                    },
-                ],
-            },
-        ],
-    },
-    {
-        name: 'how_to_submit_result',
-        description: 'Shows instructions on how to submit a game result.',
-    },
-    {
-        name: 'leaderboard',
-        description: 'Shows users who submitted the most results.',
-    },
-    {
-        name: 'myresult',
-        description: 'Shows how many results you have submitted.',
-    },
-    {
-        name: 'submitresult',
-        description: 'Submits your game results to improve bot data collection and validation.',
-        options: [
-            {
-                name: 'server_seed_hash',
-                type: 3, // STRING type
-                description: 'The Server Seed Hash from your game.',
-                required: true,
-            },
-            {
-                name: 'client_seed',
-                type: 3, // STRING type
-                description: 'The Client Seed from your game.',
-                required: true,
-            },
-            {
-                name: 'nonce',
-                type: 4, // INTEGER type
-                description: 'The Nonce from your game.',
-                required: true,
-            },
-            {
-                name: 'num_mines',
-                type: 4, // INTEGER type
-                description: 'The total number of mines in the game (e.g., 5).',
-                required: true,
-                min_value: 1,
-                max_value: 24,
-            },
-            {
-                name: 'mine_positions',
-                type: 3, // STRING type (e.g., "3,7,12,18,22")
-                description: 'Comma-separated list of mine positions (0-24).',
-                required: true,
-            },
-        ],
-    },
-    {
-       name: 'predict',
-       description: 'Analyze past game data (requires verification).',
-    },
-];
-
-const rest = new REST({ version: '10' }).setToken(process.env.BOT_TOKEN);
-
-(async () => {
-    try {
-        console.log('Started refreshing application (/) commands.');
-        // REPLACE 'YOUR_CLIENT_ID' and optionally 'YOUR_GUILD_ID' below!
-        await rest.put(
-             Routes.applicationCommands('YOUR_CLIENT_ID'), // Global commands
-             // Routes.applicationGuildCommands('YOUR_CLIENT_ID', 'YOUR_GUILD_ID'), // Guild-specific commands (faster updates)
-             { body: commands },
-         );
-
-        console.log('Successfully reloaded application (/) commands.');
-    } catch (error) {
-        console.error('Failed to register slash commands:', error.message);
-    }
-})();
-*/
