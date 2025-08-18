@@ -484,17 +484,19 @@ const commands = [
     });
 
     client.on('interactionCreate', async interaction => {
-        // Defensive check: Defer reply early for commands that might take time.
-        // This avoids the "Interaction failed" error if the bot takes too long to respond.
+        // IMPORTANT: Defer reply at the very start for all commands.
+        // This prevents the "Unknown interaction" error if the bot takes too long to respond (3 seconds).
         if (interaction.isCommand() && !interaction.deferred && !interaction.replied) {
             try {
                 await interaction.deferReply({ ephemeral: false }); // Default to non-ephemeral, can be overridden later
                 console.log(`[DEBUG] Deferred reply for command: /${ensureString(interaction.commandName)} by ${ensureString(interaction.user.tag)}`);
             } catch (deferError) {
+                // This block should ideally not be hit if the interaction is valid.
+                // If it is hit, it means the interaction was already invalid or expired.
                 console.error(`[ERROR] Failed to defer reply for command /${ensureString(interaction.commandName)}: ${ensureString(deferError.message)}`, deferError);
-                // Fallback: Try to send a simple ephemeral reply if defer fails
+                // Attempt a quick ephemeral reply if deferral failed and no reply has been sent yet
                 try {
-                    if (!interaction.replied) { // Only reply if not already replied
+                    if (!interaction.replied) {
                          await interaction.reply({ content: 'An unexpected issue occurred. Please try again.', flags: [MessageFlags.Ephemeral] }).catch(err => console.error(`[ERROR] Failed fallback reply (defer fail): ${ensureString(err.message)}`));
                     }
                 } catch (fallbackError) {
@@ -522,7 +524,7 @@ const commands = [
                 // If it's null even with 'required: true', it indicates a command registration mismatch
                 // or a Discord client issue. We add a specific check here.
                 const targetUserDiscordObject = interaction.options.getUser('user');
-                console.log(`[DEBUG /verify] Initial targetUserDiscordObject: ${targetUserDiscordObject ? targetUserDiscordObject.tag : 'null/undefined'} (ID: ${targetUserDiscordObject ? targetUserDiscordObject.id : 'N/A'})`);
+                console.log(`[DEBUG /verify] Initial targetUserDiscordObject: ${targetUserDiscordObject ? ensureString(targetUserDiscordObject.tag) : 'null/undefined'} (ID: ${targetUserDiscordObject ? ensureString(targetUserDiscordObject.id) : 'N/A'})`);
 
                 if (!targetUserDiscordObject) {
                     await interaction.editReply({ content: 'Target user not found in command options. This might be a Discord issue or the command definition is out of sync. Please try again, ensuring you select a user from the auto-complete list. If the problem persists, commands might need to be re-registered.', flags: [MessageFlags.Ephemeral] });
@@ -534,7 +536,7 @@ const commands = [
 
                 // Attempt to fetch the member, first from cache, then via API if not found
                 let member = interaction.guild?.members.cache.get(targetUserId);
-                console.log(`[DEBUG /verify] Member from cache: ${member ? member.user.tag : 'null/undefined'} (ID: ${member ? member.id : 'N/A'})`);
+                console.log(`[DEBUG /verify] Member from cache: ${member ? ensureString(member.user.tag) : 'null/undefined'} (ID: ${member ? ensureString(member.id) : 'N/A'})`);
 
                 // If member not in cache and we are in a guild context, try to fetch it
                 if (!member && interaction.guild) {
@@ -600,7 +602,7 @@ const commands = [
                     console.log(`Sent verification successful DM to ${ensureString(member.user.tag)}`);
                 } catch (dmError) {
                     console.error(`Could not send verification successful DM to ${ensureString(member.user.tag)}. Error: ${ensureString(dmError.message)}. They might have DMs disabled.`, dmError);
-                    await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${ensureString(member.user.tag)} with important information, but their DMs might be disabled. Error: ${ensureString(dmError.message)})`, ephemeral: false });
+                    await interaction.followUp({ content: `(I tried to send a verification confirmation DM to ${ensureString(member.user.tag)} with important information, but their DMs might be disabled.)`, ephemeral: false });
                 }
             }
 
@@ -863,7 +865,6 @@ Why submit a result? Your submissions help train the prediction model, making it
             }
         } catch (error) {
             console.error(`[ERROR] Error handling command '${ensureString(commandName)}' for user ${ensureString(userTag)} (${ensureString(userId)}):`, ensureString(error.message), error);
-            // This ensures a reply is always sent, even if an unexpected error occurs after deferring.
             if (interaction.deferred || interaction.replied) {
                 await interaction.editReply({ content: 'An unexpected error occurred while processing your command. Please try again later.', flags: [MessageFlags.Ephemeral] }).catch(err => console.error(`[ERROR] Failed to send error editReply: ${ensureString(err.message)}`, err));
             } else {
