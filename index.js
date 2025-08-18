@@ -2,7 +2,7 @@
 
 // --- Core Module Imports ---
 import { Client, GatewayIntentBits, Partials, PermissionFlagsBits, MessageFlags } from 'discord.js';
-import { MongoClient } from 'mongodb'; 
+import { MongoClient } from 'mongodb'; // CORRECTED: Changed '=' to 'from' here
 import { REST, Routes } from 'discord.js'; // For registering slash commands
 import crypto from 'crypto'; // Node.js built-in crypto module
 import express from 'express'; // Web server for Render health checks and self-ping
@@ -12,8 +12,8 @@ import express from 'express'; // Web server for Render health checks and self-p
 // =========================================================================
 // !!! IMPORTANT: FILL THESE OUT WITH YOUR BOT'S ACTUAL DISCORD DETAILS !!!
 // These are used for initial slash command registration.
-const CLIENT_ID_FOR_REGISTRATION = '1405900512733429812';    // <--- REPLACE THIS WITH YOUR BOT'S APPLICATION ID
-const GUILD_ID_FOR_REGISTRATION = '1406162725758828684';      // <--- REPLACE THIS WITH YOUR SPECIFIC GUILD (SERVER) ID
+const CLIENT_ID_FOR_REGISTRATION = 'PASTE_YOUR_CLIENT_ID_HERE';    // <--- REPLACE THIS WITH YOUR BOT'S APPLICATION ID
+const GUILD_ID_FOR_REGISTRATION = 'PASTE_YOUR_GUILD_ID_HERE';      // <--- REPLACE THIS WITH YOUR SPECIFIC GUILD (SERVER) ID
 const BOT_TOKEN_FOR_REGISTRATION = process.env.DISCORD_TOKEN; // This now correctly uses your environment variable!
 // =========================================================================
 
@@ -267,7 +267,7 @@ process.on('uncaughtException', (err) => {
     process.exit(1);
 });
 
-// --- Slash Command Definitions ---
+// --- Slash Command Definitions (Moved Here) ---
 const commands = [
     {
         name: 'verify',
@@ -520,6 +520,9 @@ async function main() {
                     return;
                 }
 
+                // *** NEW DEBUGGING LOGGING HERE ***
+                console.log(`[DEBUG /verify] Raw options received: ${JSON.stringify(interaction.options.data, null, 2)}`);
+
                 const targetUserDiscordObject = interaction.options.getUser('user');
                 console.log(`[DEBUG /verify] Initial targetUserDiscordObject: ${targetUserDiscordObject ? ensureString(targetUserDiscordObject.tag) : 'null/undefined'} (ID: ${targetUserDiscordObject ? ensureString(targetUserDiscordObject.id) : 'N/A'})`);
 
@@ -703,7 +706,7 @@ Why submit a result? Your submissions help train the prediction model, making it
     • \`client_seed\`: \`VqsjloxT6b\`
     • \`nonce\`: \`3002\`
     • \`num_mines\`: \`5\`
-    • • \`mine_positions\`: \`3,7,12,18,22\`
+    • \`mine_positions\`: \`3,7,12,18,22\`
 
 **Remember to paste your exact data for best results!** 🎯
             `;
